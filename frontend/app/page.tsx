@@ -3,6 +3,7 @@
 import {
   ChangeEvent,
   FormEvent,
+  ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -46,6 +47,15 @@ interface NarrationSection {
   updated_at: string;
 }
 
+interface TtsStatus {
+  available: boolean;
+  engine: string;
+  voice: string;
+  model_installed: boolean;
+  config_installed: boolean;
+  max_preview_characters: number;
+}
+
 interface ErrorResponse {
   detail?: string | Array<{ msg?: string }>;
 }
@@ -61,30 +71,87 @@ async function requestJson<T extends object>(
   const data = (await response.json()) as T | ErrorResponse;
 
   if (!response.ok) {
-    let message = `Request failed with status ${response.status}.`;
-
-    if ("detail" in data) {
-      if (typeof data.detail === "string") {
-        message = data.detail;
-      } else if (Array.isArray(data.detail)) {
-        message = data.detail
-          .map((item) => item.msg)
-          .filter(Boolean)
-          .join(", ");
-      }
-    }
-
-    throw new Error(message);
+    throw new Error(getApiErrorMessage(data, response.status));
   }
 
   return data as T;
 }
 
+async function requestAudio(
+  url: string,
+  options: RequestInit,
+): Promise<{
+  blob: Blob;
+  truncated: boolean;
+  characterCount: number | null;
+}> {
+  const response = await fetch(url, options);
+
+  if (!response.ok) {
+    const contentType =
+      response.headers.get("content-type") ?? "";
+
+    if (contentType.includes("application/json")) {
+      const data = (await response.json()) as ErrorResponse;
+
+      throw new Error(
+        getApiErrorMessage(data, response.status),
+      );
+    }
+
+    const responseText = await response.text();
+
+    throw new Error(
+      responseText ||
+        `Audio request failed with status ${response.status}.`,
+    );
+  }
+
+  const characterHeader = response.headers.get(
+    "X-OpenBook-Preview-Characters",
+  );
+
+  return {
+    blob: await response.blob(),
+    truncated:
+      response.headers.get(
+        "X-OpenBook-Preview-Truncated",
+      ) === "true",
+    characterCount: characterHeader
+      ? Number(characterHeader)
+      : null,
+  };
+}
+
+function getApiErrorMessage(
+  data: ErrorResponse,
+  status: number,
+): string {
+  if (typeof data.detail === "string") {
+    return data.detail;
+  }
+
+  if (Array.isArray(data.detail)) {
+    const validationMessage = data.detail
+      .map((item) => item.msg)
+      .filter(Boolean)
+      .join(", ");
+
+    if (validationMessage) {
+      return validationMessage;
+    }
+  }
+
+  return `Request failed with status ${status}.`;
+}
+
 export default function Home() {
-  const editorRef = useRef<HTMLTextAreaElement>(null);
+  const audioUrlReference = useRef<string | null>(null);
 
   const [apiStatus, setApiStatus] =
     useState<ApiStatus>("checking");
+  const [ttsStatus, setTtsStatus] =
+    useState<TtsStatus | null>(null);
   const [books, setBooks] = useState<BookSummary[]>([]);
   const [selectedBook, setSelectedBook] =
     useState<BookDetail | null>(null);
@@ -98,8 +165,12 @@ export default function Home() {
   const [selectedFile, setSelectedFile] =
     useState<File | null>(null);
   const [targetWords, setTargetWords] = useState(350);
+  const [previewSpeed, setPreviewSpeed] = useState(1);
+  const [audioUrl, setAudioUrl] =
+    useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [working, setWorking] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
   const [loadingBookId, setLoadingBookId] =
     useState<number | null>(null);
   const [error, setError] = useState("");
@@ -121,6 +192,26 @@ export default function Home() {
     [activeSectionId, sections],
   );
 
+  const replaceAudioUrl = useCallback(
+    (nextUrl: string | null): void => {
+      if (audioUrlReference.current) {
+        URL.revokeObjectURL(audioUrlReference.current);
+      }
+
+      audioUrlReference.current = nextUrl;
+      setAudioUrl(nextUrl);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (audioUrlReference.current) {
+        URL.revokeObjectURL(audioUrlReference.current);
+      }
+    };
+  }, []);
+
   const loadBooks = useCallback(async (): Promise<void> => {
     const storedBooks = await requestJson<BookSummary[]>(
       `${API_URL}/books`,
@@ -132,15 +223,21 @@ export default function Home() {
   useEffect(() => {
     async function initialize(): Promise<void> {
       try {
-        const health = await requestJson<{ status: string }>(
-          `${API_URL}/health`,
-        );
+        const [health, localTtsStatus] = await Promise.all([
+          requestJson<{ status: string }>(
+            `${API_URL}/health`,
+          ),
+          requestJson<TtsStatus>(`${API_URL}/tts/status`),
+        ]);
 
         if (health.status !== "online") {
-          throw new Error("Backend returned an invalid status.");
+          throw new Error(
+            "Backend returned an invalid status.",
+          );
         }
 
         setApiStatus("online");
+        setTtsStatus(localTtsStatus);
         await loadBooks();
       } catch {
         setApiStatus("offline");
@@ -153,6 +250,7 @@ export default function Home() {
   function setCurrentSection(
     section: NarrationSection | null,
   ): void {
+    replaceAudioUrl(null);
     setActiveSectionId(section?.id ?? null);
     setDraftText(section?.text ?? "");
     setCursorPosition(0);
@@ -229,7 +327,9 @@ export default function Home() {
       await loadBooks();
 
       const fileInput =
-        document.querySelector<HTMLInputElement>("#book-file");
+        document.querySelector<HTMLInputElement>(
+          "#book-file",
+        );
 
       if (fileInput) {
         fileInput.value = "";
@@ -251,14 +351,19 @@ export default function Home() {
 
     try {
       const [book, bookSections] = await Promise.all([
-        requestJson<BookDetail>(`${API_URL}/books/${bookId}`),
+        requestJson<BookDetail>(
+          `${API_URL}/books/${bookId}`,
+        ),
         loadSections(bookId),
       ]);
 
       setSelectedBook(book);
       displaySections(bookSections);
     } catch (loadError) {
-      showError(loadError, "The book could not be opened.");
+      showError(
+        loadError,
+        "The book could not be opened.",
+      );
     } finally {
       setLoadingBookId(null);
     }
@@ -291,11 +396,16 @@ export default function Home() {
       await loadBooks();
       setSuccessMessage("The book was deleted.");
     } catch (deleteError) {
-      showError(deleteError, "The book could not be deleted.");
+      showError(
+        deleteError,
+        "The book could not be deleted.",
+      );
     }
   }
 
-  function selectSection(section: NarrationSection): void {
+  function selectSection(
+    section: NarrationSection,
+  ): void {
     if (
       section.id !== activeSectionId &&
       !confirmDiscardChanges()
@@ -349,9 +459,66 @@ export default function Home() {
         `Section ${savedSection.position} was saved.`,
       );
     } catch (saveError) {
-      showError(saveError, "The section could not be saved.");
+      showError(
+        saveError,
+        "The section could not be saved.",
+      );
     } finally {
       setWorking(false);
+    }
+  }
+
+  async function generateAudioPreview(): Promise<void> {
+    if (!activeSection || !draftText.trim()) {
+      setError("The section has no text to preview.");
+      return;
+    }
+
+    if (!ttsStatus?.available) {
+      setError(
+        "The local Piper voice is not installed.",
+      );
+      return;
+    }
+
+    setPreviewing(true);
+    replaceAudioUrl(null);
+    clearMessages();
+
+    try {
+      const preview = await requestAudio(
+        `${API_URL}/sections/${activeSection.id}/audio-preview`,
+        {
+          method: "POST",
+          headers: jsonHeaders(),
+          body: JSON.stringify({
+            text: draftText,
+            speed: previewSpeed,
+          }),
+        },
+      );
+
+      const nextAudioUrl = URL.createObjectURL(preview.blob);
+
+      replaceAudioUrl(nextAudioUrl);
+
+      if (preview.truncated) {
+        setSuccessMessage(
+          `Preview generated from the first ${
+            preview.characterCount ??
+            ttsStatus.max_preview_characters
+          } characters.`,
+        );
+      } else {
+        setSuccessMessage("Audio preview generated.");
+      }
+    } catch (previewError) {
+      showError(
+        previewError,
+        "The audio preview could not be generated.",
+      );
+    } finally {
+      setPreviewing(false);
     }
   }
 
@@ -360,8 +527,12 @@ export default function Home() {
       return;
     }
 
-    const firstText = draftText.slice(0, cursorPosition).trim();
-    const secondText = draftText.slice(cursorPosition).trim();
+    const firstText = draftText
+      .slice(0, cursorPosition)
+      .trim();
+    const secondText = draftText
+      .slice(cursorPosition)
+      .trim();
 
     if (!firstText || !secondText) {
       setError(
@@ -396,7 +567,10 @@ export default function Home() {
         "The section was split at the cursor.",
       );
     } catch (splitError) {
-      showError(splitError, "The section could not be split.");
+      showError(
+        splitError,
+        "The section could not be split.",
+      );
     } finally {
       setWorking(false);
     }
@@ -439,7 +613,10 @@ export default function Home() {
         "The two sections were merged.",
       );
     } catch (mergeError) {
-      showError(mergeError, "The sections could not be merged.");
+      showError(
+        mergeError,
+        "The sections could not be merged.",
+      );
     } finally {
       setWorking(false);
     }
@@ -484,7 +661,10 @@ export default function Home() {
       setCurrentSection(nextSelection);
       setSuccessMessage("The section was deleted.");
     } catch (deleteError) {
-      showError(deleteError, "The section could not be deleted.");
+      showError(
+        deleteError,
+        "The section could not be deleted.",
+      );
     } finally {
       setWorking(false);
     }
@@ -525,7 +705,10 @@ export default function Home() {
         `The section moved ${direction}.`,
       );
     } catch (moveError) {
-      showError(moveError, "The section could not be moved.");
+      showError(
+        moveError,
+        "The section could not be moved.",
+      );
     } finally {
       setWorking(false);
     }
@@ -619,13 +802,32 @@ export default function Home() {
       <div className="mx-auto max-w-[1600px]">
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold">OpenBook AI</h1>
+            <h1 className="text-2xl font-bold">
+              OpenBook AI
+            </h1>
             <p className="mt-1 text-sm text-slate-400">
               Open-source audiobook creation studio
             </p>
           </div>
 
-          <p className={statusClass}>{statusLabel}</p>
+          <div className="text-right">
+            <p className={statusClass}>{statusLabel}</p>
+
+            {ttsStatus && (
+              <p
+                className={`mt-1 text-xs ${
+                  ttsStatus.available
+                    ? "text-emerald-300"
+                    : "text-amber-300"
+                }`}
+              >
+                Local voice:{" "}
+                {ttsStatus.available
+                  ? `${ttsStatus.voice} ready`
+                  : "not installed"}
+              </p>
+            )}
+          </div>
         </header>
 
         {error && (
@@ -641,9 +843,14 @@ export default function Home() {
         <section className="mt-8 grid gap-6 xl:grid-cols-[300px_340px_minmax(0,1fr)]">
           <aside className="space-y-6">
             <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
-              <h2 className="text-lg font-bold">Import book</h2>
+              <h2 className="text-lg font-bold">
+                Import book
+              </h2>
 
-              <form className="mt-5" onSubmit={handleUpload}>
+              <form
+                className="mt-5"
+                onSubmit={handleUpload}
+              >
                 <input
                   accept=".pdf,.epub,.docx,.txt"
                   className="block w-full rounded-lg border border-slate-700 bg-slate-950 p-3 text-sm"
@@ -685,8 +892,12 @@ export default function Home() {
                   >
                     <button
                       className="w-full text-left"
-                      disabled={loadingBookId === book.id}
-                      onClick={() => void openBook(book.id)}
+                      disabled={
+                        loadingBookId === book.id
+                      }
+                      onClick={() =>
+                        void openBook(book.id)
+                      }
                       type="button"
                     >
                       <h3 className="break-words font-semibold">
@@ -694,15 +905,16 @@ export default function Home() {
                       </h3>
 
                       <p className="mt-2 text-xs text-slate-400">
-                        {book.word_count.toLocaleString()} words
-                        {" · "}
-                        {book.estimated_minutes} min
+                        {book.word_count.toLocaleString()}{" "}
+                        words · {book.estimated_minutes} min
                       </p>
                     </button>
 
                     <button
                       className="mt-3 text-sm text-red-300"
-                      onClick={() => void deleteBook(book.id)}
+                      onClick={() =>
+                        void deleteBook(book.id)
+                      }
                       type="button"
                     >
                       Delete book
@@ -737,7 +949,9 @@ export default function Home() {
                   max={1000}
                   min={100}
                   onChange={(event) =>
-                    setTargetWords(Number(event.target.value))
+                    setTargetWords(
+                      Number(event.target.value),
+                    )
                   }
                   type="number"
                   value={targetWords}
@@ -746,7 +960,9 @@ export default function Home() {
                 <button
                   className="mt-3 w-full rounded-lg border border-slate-600 px-4 py-2 font-semibold disabled:opacity-50"
                   disabled={working}
-                  onClick={() => void rebuildSections()}
+                  onClick={() =>
+                    void rebuildSections()
+                  }
                   type="button"
                 >
                   Rebuild sections
@@ -763,7 +979,9 @@ export default function Home() {
                       : "border-slate-700 bg-slate-950"
                   }`}
                   key={section.id}
-                  onClick={() => selectSection(section)}
+                  onClick={() =>
+                    selectSection(section)
+                  }
                   type="button"
                 >
                   <div className="flex justify-between gap-3">
@@ -817,16 +1035,20 @@ export default function Home() {
                         : "text-emerald-300"
                     }
                   >
-                    {dirty ? "Unsaved changes" : "Saved"}
+                    {dirty
+                      ? "Unsaved changes"
+                      : "Saved"}
                   </span>
                 </div>
 
                 <textarea
                   className="mt-6 min-h-[480px] w-full resize-y rounded-xl border border-slate-700 bg-slate-950 p-5 leading-8 outline-none focus:border-cyan-500"
                   onChange={(event) => {
+                    replaceAudioUrl(null);
                     setDraftText(event.target.value);
                     setDirty(
-                      event.target.value !== activeSection.text,
+                      event.target.value !==
+                        activeSection.text,
                     );
                   }}
                   onClick={(event) =>
@@ -844,7 +1066,6 @@ export default function Home() {
                       event.currentTarget.selectionStart,
                     )
                   }
-                  ref={editorRef}
                   spellCheck
                   value={draftText}
                 />
@@ -856,14 +1077,18 @@ export default function Home() {
                 <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   <ActionButton
                     disabled={!dirty || working}
-                    onClick={() => void saveActiveSection()}
+                    onClick={() =>
+                      void saveActiveSection()
+                    }
                   >
                     Save
                   </ActionButton>
 
                   <ActionButton
                     disabled={working}
-                    onClick={() => void splitAtCursor()}
+                    onClick={() =>
+                      void splitAtCursor()
+                    }
                   >
                     Split at cursor
                   </ActionButton>
@@ -872,9 +1097,12 @@ export default function Home() {
                     disabled={
                       working ||
                       dirty ||
-                      activeSectionIndex >= sections.length - 1
+                      activeSectionIndex >=
+                        sections.length - 1
                     }
-                    onClick={() => void mergeWithNext()}
+                    onClick={() =>
+                      void mergeWithNext()
+                    }
                   >
                     Merge with next
                   </ActionButton>
@@ -885,7 +1113,9 @@ export default function Home() {
                       dirty ||
                       activeSectionIndex <= 0
                     }
-                    onClick={() => void moveSection("up")}
+                    onClick={() =>
+                      void moveSection("up")
+                    }
                   >
                     Move up
                   </ActionButton>
@@ -894,9 +1124,12 @@ export default function Home() {
                     disabled={
                       working ||
                       dirty ||
-                      activeSectionIndex >= sections.length - 1
+                      activeSectionIndex >=
+                        sections.length - 1
                     }
-                    onClick={() => void moveSection("down")}
+                    onClick={() =>
+                      void moveSection("down")
+                    }
                   >
                     Move down
                   </ActionButton>
@@ -904,11 +1137,122 @@ export default function Home() {
                   <button
                     className="rounded-lg border border-red-500/50 px-4 py-3 font-semibold text-red-300 disabled:opacity-40"
                     disabled={working || dirty}
-                    onClick={() => void deleteActiveSection()}
+                    onClick={() =>
+                      void deleteActiveSection()
+                    }
                     type="button"
                   >
                     Delete section
                   </button>
+                </div>
+
+                <div className="mt-8 rounded-2xl border border-slate-700 bg-slate-950 p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <h3 className="text-lg font-bold">
+                        Local audio preview
+                      </h3>
+
+                      <p className="mt-2 text-sm leading-6 text-slate-400">
+                        Generate a temporary WAV preview
+                        using the local Piper narrator.
+                      </p>
+                    </div>
+
+                    <span
+                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                        ttsStatus?.available
+                          ? "bg-emerald-500/15 text-emerald-300"
+                          : "bg-amber-500/15 text-amber-300"
+                      }`}
+                    >
+                      {ttsStatus?.available
+                        ? `${ttsStatus.voice} ready`
+                        : "Voice unavailable"}
+                    </span>
+                  </div>
+
+                  <div className="mt-5">
+                    <div className="flex items-center justify-between">
+                      <label
+                        className="text-sm font-semibold"
+                        htmlFor="preview-speed"
+                      >
+                        Speaking speed
+                      </label>
+
+                      <span className="text-sm text-slate-300">
+                        {previewSpeed.toFixed(2)}×
+                      </span>
+                    </div>
+
+                    <input
+                      className="mt-3 w-full"
+                      id="preview-speed"
+                      max={1.5}
+                      min={0.75}
+                      onChange={(event) => {
+                        replaceAudioUrl(null);
+                        setPreviewSpeed(
+                          Number(event.target.value),
+                        );
+                      }}
+                      step={0.05}
+                      type="range"
+                      value={previewSpeed}
+                    />
+                  </div>
+
+                  {ttsStatus &&
+                    draftText.length >
+                      ttsStatus.max_preview_characters && (
+                      <p className="mt-4 text-sm text-amber-300">
+                        Long sections are limited to the
+                        first{" "}
+                        {ttsStatus.max_preview_characters.toLocaleString()}{" "}
+                        characters for previews.
+                      </p>
+                    )}
+
+                  <button
+                    className="mt-5 rounded-lg bg-cyan-400 px-6 py-3 font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={
+                      previewing ||
+                      !draftText.trim() ||
+                      !ttsStatus?.available
+                    }
+                    onClick={() =>
+                      void generateAudioPreview()
+                    }
+                    type="button"
+                  >
+                    {previewing
+                      ? "Generating speech..."
+                      : "Generate audio preview"}
+                  </button>
+
+                  {audioUrl && (
+                    <div className="mt-5 rounded-xl border border-slate-700 bg-slate-900 p-4">
+                      <audio
+                        className="w-full"
+                        controls
+                        key={audioUrl}
+                        preload="metadata"
+                        src={audioUrl}
+                      >
+                        Your browser does not support
+                        audio playback.
+                      </audio>
+
+                      <a
+                        className="mt-4 inline-block text-sm font-semibold text-cyan-300"
+                        download={`section-${activeSection.position}-preview.wav`}
+                        href={audioUrl}
+                      >
+                        Download WAV preview
+                      </a>
+                    </div>
+                  )}
                 </div>
               </>
             )}
@@ -924,7 +1268,7 @@ function ActionButton({
   disabled,
   onClick,
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
   disabled: boolean;
   onClick: () => void;
 }) {
@@ -944,7 +1288,7 @@ function Message({
   children,
   type,
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
   type: "error" | "success";
 }) {
   const classes =
@@ -953,7 +1297,9 @@ function Message({
       : "border-emerald-500/50 bg-emerald-500/10 text-emerald-200";
 
   return (
-    <div className={`mt-6 rounded-lg border p-4 ${classes}`}>
+    <div
+      className={`mt-6 rounded-lg border p-4 ${classes}`}
+    >
       {children}
     </div>
   );

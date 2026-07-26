@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import create_database_tables
 from app.routers.books import router as books_router
+from app.routers.tts import router as tts_router
 
 
 @asynccontextmanager
@@ -20,7 +21,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="OpenBook AI API",
     description="Open-source audiobook preparation API.",
-    version="0.3.0",
+    version="0.5.0",
     lifespan=lifespan,
 )
 
@@ -33,9 +34,14 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=[
+        "X-OpenBook-Preview-Truncated",
+        "X-OpenBook-Preview-Characters",
+    ],
 )
 
 app.include_router(books_router)
+app.include_router(tts_router)
 
 
 @app.get("/")
@@ -43,7 +49,7 @@ def read_root() -> dict[str, str]:
     """Return basic API information."""
     return {
         "name": "OpenBook AI API",
-        "version": "0.3.0",
+        "version": "0.5.0",
     }
 
 
