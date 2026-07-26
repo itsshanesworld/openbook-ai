@@ -31,7 +31,7 @@ from app.models import (
     NarrationSection,
     utc_timestamp,
 )
-from app.schemas import SectionUpdate
+from app.schemas import SectionMove, SectionSplit, SectionUpdate
 
 router = APIRouter()
 DatabaseSession = Annotated[Session, Depends(get_session)]
@@ -198,10 +198,9 @@ def list_narration_sections(
     """Return editable narration sections in reading order."""
     get_existing_book(session, book_id)
 
-    return [
-        serialize_section(section)
-        for section in get_sections(session, book_id)
-    ]
+    return serialize_sections(
+        get_sections(session, book_id)
+    )
 
 
 @router.post("/books/{book_id}/sections/rebuild")
@@ -213,11 +212,13 @@ def rebuild_narration_sections(
         Query(ge=100, le=1_000),
     ] = 350,
 ) -> list[dict[str, object]]:
-    """Replace existing sections using the current book text."""
+    """Replace existing sections using the original book text."""
     book = get_existing_book(session, book_id)
 
     for existing_section in get_sections(session, book_id):
         session.delete(existing_section)
+
+    session.flush()
 
     section_texts = split_into_narration_sections(
         book.extracted_text,
@@ -240,13 +241,9 @@ def rebuild_narration_sections(
     session.add_all(new_sections)
     session.commit()
 
-    for section in new_sections:
-        session.refresh(section)
-
-    return [
-        serialize_section(section)
-        for section in new_sections
-    ]
+    return serialize_sections(
+        get_sections(session, book_id)
+    )
 
 
 @router.patch("/sections/{section_id}")
@@ -256,14 +253,7 @@ def update_narration_section(
     session: DatabaseSession,
 ) -> dict[str, object]:
     """Save edited narration text."""
-    section = session.get(NarrationSection, section_id)
-
-    if section is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Narration section not found.",
-        )
-
+    section = get_existing_section(session, section_id)
     section.text = normalize_text(update.text)
     section.word_count = len(section.text.split())
     section.updated_at = utc_timestamp()
@@ -273,6 +263,158 @@ def update_narration_section(
     session.refresh(section)
 
     return serialize_section(section)
+
+
+@router.post("/sections/{section_id}/split")
+def split_narration_section(
+    section_id: int,
+    split: SectionSplit,
+    session: DatabaseSession,
+) -> list[dict[str, object]]:
+    """Split one narration section into two sections."""
+    section = get_existing_section(session, section_id)
+    first_text = normalize_text(split.first_text)
+    second_text = normalize_text(split.second_text)
+
+    if not first_text or not second_text:
+        raise HTTPException(
+            status_code=422,
+            detail="Both split sections must contain text.",
+        )
+
+    existing_sections = get_sections(
+        session,
+        section.book_id,
+    )
+
+    for existing_section in reversed(existing_sections):
+        if existing_section.position > section.position:
+            existing_section.position += 1
+            session.add(existing_section)
+
+    section.text = first_text
+    section.word_count = len(first_text.split())
+    section.updated_at = utc_timestamp()
+    session.add(section)
+
+    new_section = NarrationSection(
+        book_id=section.book_id,
+        position=section.position + 1,
+        text=second_text,
+        word_count=len(second_text.split()),
+    )
+
+    session.add(new_section)
+    session.commit()
+
+    return serialize_sections(
+        get_sections(session, section.book_id)
+    )
+
+
+@router.post("/sections/{section_id}/merge-next")
+def merge_with_next_section(
+    section_id: int,
+    session: DatabaseSession,
+) -> list[dict[str, object]]:
+    """Merge a section with the section immediately after it."""
+    section = get_existing_section(session, section_id)
+    sections = get_sections(session, section.book_id)
+
+    current_index = find_section_index(
+        sections,
+        section_id,
+    )
+
+    if current_index >= len(sections) - 1:
+        raise HTTPException(
+            status_code=422,
+            detail="The final section has no next section to merge.",
+        )
+
+    next_section = sections[current_index + 1]
+
+    section.text = normalize_text(
+        f"{section.text}\n\n{next_section.text}"
+    )
+    section.word_count = len(section.text.split())
+    section.updated_at = utc_timestamp()
+
+    session.add(section)
+    session.delete(next_section)
+    session.flush()
+
+    renumber_sections(session, section.book_id)
+    session.commit()
+
+    return serialize_sections(
+        get_sections(session, section.book_id)
+    )
+
+
+@router.delete("/sections/{section_id}")
+def delete_narration_section(
+    section_id: int,
+    session: DatabaseSession,
+) -> list[dict[str, object]]:
+    """Delete one narration section and renumber the rest."""
+    section = get_existing_section(session, section_id)
+    book_id = section.book_id
+
+    session.delete(section)
+    session.flush()
+
+    renumber_sections(session, book_id)
+    session.commit()
+
+    return serialize_sections(
+        get_sections(session, book_id)
+    )
+
+
+@router.post("/sections/{section_id}/move")
+def move_narration_section(
+    section_id: int,
+    move: SectionMove,
+    session: DatabaseSession,
+) -> list[dict[str, object]]:
+    """Move a section one position up or down."""
+    section = get_existing_section(session, section_id)
+    sections = get_sections(session, section.book_id)
+    current_index = find_section_index(
+        sections,
+        section_id,
+    )
+
+    target_index = (
+        current_index - 1
+        if move.direction == "up"
+        else current_index + 1
+    )
+
+    if target_index < 0 or target_index >= len(sections):
+        raise HTTPException(
+            status_code=422,
+            detail=f"The section cannot move {move.direction}.",
+        )
+
+    target_section = sections[target_index]
+
+    section.position, target_section.position = (
+        target_section.position,
+        section.position,
+    )
+
+    section.updated_at = utc_timestamp()
+    target_section.updated_at = utc_timestamp()
+
+    session.add(section)
+    session.add(target_section)
+    session.commit()
+
+    return serialize_sections(
+        get_sections(session, section.book_id)
+    )
 
 
 def get_existing_book(
@@ -289,6 +431,22 @@ def get_existing_book(
         )
 
     return book
+
+
+def get_existing_section(
+    session: Session,
+    section_id: int,
+) -> NarrationSection:
+    """Return an existing narration section."""
+    section = session.get(NarrationSection, section_id)
+
+    if section is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Narration section not found.",
+        )
+
+    return section
 
 
 def require_book_id(book: Book) -> int:
@@ -321,7 +479,10 @@ def get_sections(
     statement = (
         select(NarrationSection)
         .where(NarrationSection.book_id == book_id)
-        .order_by(NarrationSection.position)
+        .order_by(
+            NarrationSection.position,
+            NarrationSection.id,
+        )
     )
 
     return list(session.exec(statement).all())
@@ -333,6 +494,34 @@ def count_chapters(
 ) -> int:
     """Count detected chapters for a book."""
     return len(get_chapters(session, book_id))
+
+
+def find_section_index(
+    sections: list[NarrationSection],
+    section_id: int,
+) -> int:
+    """Find a section's position in an ordered list."""
+    for index, section in enumerate(sections):
+        if section.id == section_id:
+            return index
+
+    raise HTTPException(
+        status_code=404,
+        detail="Narration section not found.",
+    )
+
+
+def renumber_sections(
+    session: Session,
+    book_id: int,
+) -> None:
+    """Assign consecutive positions to all book sections."""
+    for position, section in enumerate(
+        get_sections(session, book_id),
+        start=1,
+    ):
+        section.position = position
+        session.add(section)
 
 
 def serialize_book_summary(
@@ -396,3 +585,13 @@ def serialize_section(
         "created_at": section.created_at,
         "updated_at": section.updated_at,
     }
+
+
+def serialize_sections(
+    sections: list[NarrationSection],
+) -> list[dict[str, object]]:
+    """Convert an ordered collection of sections."""
+    return [
+        serialize_section(section)
+        for section in sections
+    ]

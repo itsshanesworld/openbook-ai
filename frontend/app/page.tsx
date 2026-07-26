@@ -6,6 +6,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -80,6 +81,8 @@ async function requestJson<T extends object>(
 }
 
 export default function Home() {
+  const editorRef = useRef<HTMLTextAreaElement>(null);
+
   const [apiStatus, setApiStatus] =
     useState<ApiStatus>("checking");
   const [books, setBooks] = useState<BookSummary[]>([]);
@@ -90,16 +93,15 @@ export default function Home() {
   const [activeSectionId, setActiveSectionId] =
     useState<number | null>(null);
   const [draftText, setDraftText] = useState("");
+  const [cursorPosition, setCursorPosition] = useState(0);
   const [dirty, setDirty] = useState(false);
   const [selectedFile, setSelectedFile] =
     useState<File | null>(null);
   const [targetWords, setTargetWords] = useState(350);
   const [uploading, setUploading] = useState(false);
+  const [working, setWorking] = useState(false);
   const [loadingBookId, setLoadingBookId] =
     useState<number | null>(null);
-  const [savingSection, setSavingSection] = useState(false);
-  const [rebuildingSections, setRebuildingSections] =
-    useState(false);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
@@ -148,16 +150,29 @@ export default function Home() {
     void initialize();
   }, [loadBooks]);
 
+  function setCurrentSection(
+    section: NarrationSection | null,
+  ): void {
+    setActiveSectionId(section?.id ?? null);
+    setDraftText(section?.text ?? "");
+    setCursorPosition(0);
+    setDirty(false);
+  }
+
   function displaySections(
     nextSections: NarrationSection[],
+    preferredSectionId?: number,
   ): void {
     setSections(nextSections);
 
-    const firstSection = nextSections[0] ?? null;
+    const preferredSection =
+      nextSections.find(
+        (section) => section.id === preferredSectionId,
+      ) ??
+      nextSections[0] ??
+      null;
 
-    setActiveSectionId(firstSection?.id ?? null);
-    setDraftText(firstSection?.text ?? "");
-    setDirty(false);
+    setCurrentSection(preferredSection);
   }
 
   async function loadSections(
@@ -172,8 +187,7 @@ export default function Home() {
     event: ChangeEvent<HTMLInputElement>,
   ): void {
     setSelectedFile(event.target.files?.[0] ?? null);
-    setError("");
-    setSuccessMessage("");
+    clearMessages();
   }
 
   async function handleUpload(
@@ -190,8 +204,7 @@ export default function Home() {
     formData.append("file", selectedFile);
 
     setUploading(true);
-    setError("");
-    setSuccessMessage("");
+    clearMessages();
 
     try {
       const uploadedBook = await requestJson<BookDetail>(
@@ -222,29 +235,19 @@ export default function Home() {
         fileInput.value = "";
       }
     } catch (uploadError) {
-      setError(
-        uploadError instanceof Error
-          ? uploadError.message
-          : "The upload failed.",
-      );
+      showError(uploadError, "The upload failed.");
     } finally {
       setUploading(false);
     }
   }
 
   async function openBook(bookId: number): Promise<void> {
-    if (
-      dirty &&
-      !window.confirm(
-        "You have unsaved section changes. Discard them?",
-      )
-    ) {
+    if (!confirmDiscardChanges()) {
       return;
     }
 
     setLoadingBookId(bookId);
-    setError("");
-    setSuccessMessage("");
+    clearMessages();
 
     try {
       const [book, bookSections] = await Promise.all([
@@ -255,11 +258,7 @@ export default function Home() {
       setSelectedBook(book);
       displaySections(bookSections);
     } catch (loadError) {
-      setError(
-        loadError instanceof Error
-          ? loadError.message
-          : "The book could not be opened.",
-      );
+      showError(loadError, "The book could not be opened.");
     } finally {
       setLoadingBookId(null);
     }
@@ -267,15 +266,14 @@ export default function Home() {
 
   async function deleteBook(bookId: number): Promise<void> {
     const approved = window.confirm(
-      "Delete this book and all of its narration sections?",
+      "Delete this book and all narration sections?",
     );
 
     if (!approved) {
       return;
     }
 
-    setError("");
-    setSuccessMessage("");
+    clearMessages();
 
     try {
       await requestJson<{
@@ -293,38 +291,20 @@ export default function Home() {
       await loadBooks();
       setSuccessMessage("The book was deleted.");
     } catch (deleteError) {
-      setError(
-        deleteError instanceof Error
-          ? deleteError.message
-          : "The book could not be deleted.",
-      );
+      showError(deleteError, "The book could not be deleted.");
     }
   }
 
   function selectSection(section: NarrationSection): void {
     if (
-      dirty &&
       section.id !== activeSectionId &&
-      !window.confirm(
-        "You have unsaved edits. Discard them and open another section?",
-      )
+      !confirmDiscardChanges()
     ) {
       return;
     }
 
-    setActiveSectionId(section.id);
-    setDraftText(section.text);
-    setDirty(false);
-    setError("");
-    setSuccessMessage("");
-  }
-
-  function moveToSection(offset: number): void {
-    const nextSection = sections[activeSectionIndex + offset];
-
-    if (nextSection) {
-      selectSection(nextSection);
-    }
+    setCurrentSection(section);
+    clearMessages();
   }
 
   async function saveActiveSection(): Promise<void> {
@@ -339,9 +319,8 @@ export default function Home() {
       return;
     }
 
-    setSavingSection(true);
-    setError("");
-    setSuccessMessage("");
+    setWorking(true);
+    clearMessages();
 
     try {
       const savedSection =
@@ -349,9 +328,7 @@ export default function Home() {
           `${API_URL}/sections/${activeSection.id}`,
           {
             method: "PATCH",
-            headers: {
-              "Content-Type": "application/json",
-            },
+            headers: jsonHeaders(),
             body: JSON.stringify({
               text: cleanedText,
             }),
@@ -372,13 +349,185 @@ export default function Home() {
         `Section ${savedSection.position} was saved.`,
       );
     } catch (saveError) {
-      setError(
-        saveError instanceof Error
-          ? saveError.message
-          : "The section could not be saved.",
-      );
+      showError(saveError, "The section could not be saved.");
     } finally {
-      setSavingSection(false);
+      setWorking(false);
+    }
+  }
+
+  async function splitAtCursor(): Promise<void> {
+    if (!activeSection) {
+      return;
+    }
+
+    const firstText = draftText.slice(0, cursorPosition).trim();
+    const secondText = draftText.slice(cursorPosition).trim();
+
+    if (!firstText || !secondText) {
+      setError(
+        "Place the cursor between two portions of text before splitting.",
+      );
+      return;
+    }
+
+    setWorking(true);
+    clearMessages();
+
+    try {
+      const updatedSections =
+        await requestJson<NarrationSection[]>(
+          `${API_URL}/sections/${activeSection.id}/split`,
+          {
+            method: "POST",
+            headers: jsonHeaders(),
+            body: JSON.stringify({
+              first_text: firstText,
+              second_text: secondText,
+            }),
+          },
+        );
+
+      displaySections(
+        updatedSections,
+        activeSection.id,
+      );
+
+      setSuccessMessage(
+        "The section was split at the cursor.",
+      );
+    } catch (splitError) {
+      showError(splitError, "The section could not be split.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function mergeWithNext(): Promise<void> {
+    if (!activeSection || dirty) {
+      setError(
+        "Save or discard your current edits before merging.",
+      );
+      return;
+    }
+
+    const approved = window.confirm(
+      "Merge this section with the next section?",
+    );
+
+    if (!approved) {
+      return;
+    }
+
+    setWorking(true);
+    clearMessages();
+
+    try {
+      const updatedSections =
+        await requestJson<NarrationSection[]>(
+          `${API_URL}/sections/${activeSection.id}/merge-next`,
+          {
+            method: "POST",
+          },
+        );
+
+      displaySections(
+        updatedSections,
+        activeSection.id,
+      );
+
+      setSuccessMessage(
+        "The two sections were merged.",
+      );
+    } catch (mergeError) {
+      showError(mergeError, "The sections could not be merged.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function deleteActiveSection(): Promise<void> {
+    if (!activeSection || dirty) {
+      setError(
+        "Save or discard your current edits before deleting.",
+      );
+      return;
+    }
+
+    const approved = window.confirm(
+      `Delete section ${activeSection.position}?`,
+    );
+
+    if (!approved) {
+      return;
+    }
+
+    const previousIndex = activeSectionIndex;
+    setWorking(true);
+    clearMessages();
+
+    try {
+      const updatedSections =
+        await requestJson<NarrationSection[]>(
+          `${API_URL}/sections/${activeSection.id}`,
+          {
+            method: "DELETE",
+          },
+        );
+
+      const nextSelection =
+        updatedSections[previousIndex] ??
+        updatedSections[previousIndex - 1] ??
+        updatedSections[0] ??
+        null;
+
+      setSections(updatedSections);
+      setCurrentSection(nextSelection);
+      setSuccessMessage("The section was deleted.");
+    } catch (deleteError) {
+      showError(deleteError, "The section could not be deleted.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function moveSection(
+    direction: "up" | "down",
+  ): Promise<void> {
+    if (!activeSection || dirty) {
+      setError(
+        "Save or discard your current edits before moving.",
+      );
+      return;
+    }
+
+    setWorking(true);
+    clearMessages();
+
+    try {
+      const updatedSections =
+        await requestJson<NarrationSection[]>(
+          `${API_URL}/sections/${activeSection.id}/move`,
+          {
+            method: "POST",
+            headers: jsonHeaders(),
+            body: JSON.stringify({
+              direction,
+            }),
+          },
+        );
+
+      displaySections(
+        updatedSections,
+        activeSection.id,
+      );
+
+      setSuccessMessage(
+        `The section moved ${direction}.`,
+      );
+    } catch (moveError) {
+      showError(moveError, "The section could not be moved.");
+    } finally {
+      setWorking(false);
     }
   }
 
@@ -390,7 +539,7 @@ export default function Home() {
     if (
       sections.length > 0 &&
       !window.confirm(
-        "Rebuilding will replace all current narration sections and discard section edits. Continue?",
+        "Rebuilding replaces all section edits. Continue?",
       )
     ) {
       return;
@@ -402,9 +551,8 @@ export default function Home() {
     );
 
     setTargetWords(safeTargetWords);
-    setRebuildingSections(true);
-    setError("");
-    setSuccessMessage("");
+    setWorking(true);
+    clearMessages();
 
     try {
       const rebuiltSections =
@@ -420,14 +568,38 @@ export default function Home() {
         `${rebuiltSections.length} narration sections were created.`,
       );
     } catch (rebuildError) {
-      setError(
-        rebuildError instanceof Error
-          ? rebuildError.message
-          : "The sections could not be rebuilt.",
+      showError(
+        rebuildError,
+        "The sections could not be rebuilt.",
       );
     } finally {
-      setRebuildingSections(false);
+      setWorking(false);
     }
+  }
+
+  function confirmDiscardChanges(): boolean {
+    return (
+      !dirty ||
+      window.confirm(
+        "You have unsaved edits. Discard them?",
+      )
+    );
+  }
+
+  function clearMessages(): void {
+    setError("");
+    setSuccessMessage("");
+  }
+
+  function showError(
+    caughtError: unknown,
+    fallback: string,
+  ): void {
+    setError(
+      caughtError instanceof Error
+        ? caughtError.message
+        : fallback,
+    );
   }
 
   const statusLabel = {
@@ -457,15 +629,13 @@ export default function Home() {
         </header>
 
         {error && (
-          <div className="mt-6 rounded-lg border border-red-500/50 bg-red-500/10 p-4 text-red-200">
-            {error}
-          </div>
+          <Message type="error">{error}</Message>
         )}
 
         {successMessage && (
-          <div className="mt-6 rounded-lg border border-emerald-500/50 bg-emerald-500/10 p-4 text-emerald-200">
+          <Message type="success">
             {successMessage}
-          </div>
+          </Message>
         )}
 
         <section className="mt-8 grid gap-6 xl:grid-cols-[300px_340px_minmax(0,1fr)]">
@@ -473,35 +643,17 @@ export default function Home() {
             <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
               <h2 className="text-lg font-bold">Import book</h2>
 
-              <p className="mt-2 text-sm leading-6 text-slate-400">
-                Supports PDF, EPUB, DOCX, and TXT files up to
-                25 MB.
-              </p>
-
               <form className="mt-5" onSubmit={handleUpload}>
-                <label
-                  className="text-sm font-semibold"
-                  htmlFor="book-file"
-                >
-                  Book file
-                </label>
-
                 <input
                   accept=".pdf,.epub,.docx,.txt"
-                  className="mt-3 block w-full rounded-lg border border-slate-700 bg-slate-950 p-3 text-sm"
+                  className="block w-full rounded-lg border border-slate-700 bg-slate-950 p-3 text-sm"
                   id="book-file"
                   onChange={handleFileChange}
                   type="file"
                 />
 
-                {selectedFile && (
-                  <p className="mt-3 break-all rounded-lg bg-slate-800 p-3 text-sm">
-                    {selectedFile.name}
-                  </p>
-                )}
-
                 <button
-                  className="mt-4 w-full rounded-lg bg-white px-4 py-3 font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="mt-4 w-full rounded-lg bg-white px-4 py-3 font-semibold text-slate-950 disabled:opacity-50"
                   disabled={
                     !selectedFile ||
                     uploading ||
@@ -517,20 +669,11 @@ export default function Home() {
             </div>
 
             <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-bold">Library</h2>
-                <span className="rounded-full bg-slate-800 px-3 py-1 text-sm">
-                  {books.length}
-                </span>
-              </div>
+              <h2 className="text-lg font-bold">
+                Library ({books.length})
+              </h2>
 
-              {books.length === 0 && (
-                <p className="mt-4 text-sm text-slate-400">
-                  Your saved books will appear here.
-                </p>
-              )}
-
-              <div className="mt-4 max-h-[600px] space-y-3 overflow-y-auto">
+              <div className="mt-4 max-h-[620px] space-y-3 overflow-y-auto">
                 {books.map((book) => (
                   <article
                     className={`rounded-xl border p-4 ${
@@ -550,21 +693,19 @@ export default function Home() {
                         {book.filename}
                       </h3>
 
-                      <p className="mt-2 text-xs leading-5 text-slate-400">
+                      <p className="mt-2 text-xs text-slate-400">
                         {book.word_count.toLocaleString()} words
-                        <br />
-                        {book.estimated_minutes} minutes
-                        <br />
-                        {formatDate(book.created_at)}
+                        {" · "}
+                        {book.estimated_minutes} min
                       </p>
                     </button>
 
                     <button
-                      className="mt-3 text-sm font-semibold text-red-300"
+                      className="mt-3 text-sm text-red-300"
                       onClick={() => void deleteBook(book.id)}
                       type="button"
                     >
-                      Delete
+                      Delete book
                     </button>
                   </article>
                 ))}
@@ -575,159 +716,89 @@ export default function Home() {
           <aside className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-bold">
-                Narration sections
+                Sections
               </h2>
 
-              <span className="rounded-full bg-slate-800 px-3 py-1 text-sm">
-                {sections.length}
-              </span>
+              <span>{sections.length}</span>
             </div>
 
-            {!selectedBook && (
-              <p className="mt-4 text-sm leading-6 text-slate-400">
-                Select a book to view its narration sections.
-              </p>
-            )}
-
             {selectedBook && (
-              <>
-                <div className="mt-5 rounded-xl bg-slate-950 p-4">
-                  <label
-                    className="text-sm font-semibold"
-                    htmlFor="target-words"
-                  >
-                    Target words per section
-                  </label>
+              <div className="mt-5 rounded-xl bg-slate-950 p-4">
+                <label
+                  className="text-sm font-semibold"
+                  htmlFor="target-words"
+                >
+                  Target words
+                </label>
 
-                  <input
-                    className="mt-3 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2"
-                    id="target-words"
-                    max={1000}
-                    min={100}
-                    onChange={(event) =>
-                      setTargetWords(
-                        Number(event.target.value),
-                      )
-                    }
-                    type="number"
-                    value={targetWords}
-                  />
+                <input
+                  className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2"
+                  id="target-words"
+                  max={1000}
+                  min={100}
+                  onChange={(event) =>
+                    setTargetWords(Number(event.target.value))
+                  }
+                  type="number"
+                  value={targetWords}
+                />
 
-                  <button
-                    className="mt-3 w-full rounded-lg border border-slate-600 px-4 py-2 font-semibold disabled:opacity-50"
-                    disabled={rebuildingSections}
-                    onClick={() => void rebuildSections()}
-                    type="button"
-                  >
-                    {rebuildingSections
-                      ? "Rebuilding..."
-                      : sections.length === 0
-                        ? "Create sections"
-                        : "Rebuild sections"}
-                  </button>
-                </div>
-
-                {sections.length === 0 && (
-                  <p className="mt-5 text-sm leading-6 text-slate-400">
-                    This book does not have narration sections
-                    yet. Create them using the button above.
-                  </p>
-                )}
-
-                <div className="mt-5 max-h-[650px] space-y-2 overflow-y-auto">
-                  {sections.map((section) => (
-                    <button
-                      className={`w-full rounded-xl border p-4 text-left ${
-                        section.id === activeSectionId
-                          ? "border-cyan-500 bg-cyan-500/10"
-                          : "border-slate-700 bg-slate-950"
-                      }`}
-                      key={section.id}
-                      onClick={() => selectSection(section)}
-                      type="button"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="font-semibold">
-                          Section {section.position}
-                        </span>
-
-                        <span className="text-xs text-slate-400">
-                          {formatDuration(
-                            section.estimated_seconds,
-                          )}
-                        </span>
-                      </div>
-
-                      <p className="mt-2 line-clamp-3 text-sm leading-5 text-slate-400">
-                        {section.text}
-                      </p>
-
-                      <p className="mt-2 text-xs text-slate-500">
-                        {section.word_count} words
-                      </p>
-                    </button>
-                  ))}
-                </div>
-              </>
+                <button
+                  className="mt-3 w-full rounded-lg border border-slate-600 px-4 py-2 font-semibold disabled:opacity-50"
+                  disabled={working}
+                  onClick={() => void rebuildSections()}
+                  type="button"
+                >
+                  Rebuild sections
+                </button>
+              </div>
             )}
+
+            <div className="mt-5 max-h-[650px] space-y-2 overflow-y-auto">
+              {sections.map((section) => (
+                <button
+                  className={`w-full rounded-xl border p-4 text-left ${
+                    section.id === activeSectionId
+                      ? "border-cyan-500 bg-cyan-500/10"
+                      : "border-slate-700 bg-slate-950"
+                  }`}
+                  key={section.id}
+                  onClick={() => selectSection(section)}
+                  type="button"
+                >
+                  <div className="flex justify-between gap-3">
+                    <span className="font-semibold">
+                      Section {section.position}
+                    </span>
+
+                    <span className="text-xs text-slate-400">
+                      {formatDuration(
+                        section.estimated_seconds,
+                      )}
+                    </span>
+                  </div>
+
+                  <p className="mt-2 line-clamp-3 text-sm text-slate-400">
+                    {section.text}
+                  </p>
+                </button>
+              ))}
+            </div>
           </aside>
 
           <section className="min-w-0 rounded-2xl border border-slate-800 bg-slate-900 p-5 sm:p-6">
-            {!selectedBook && (
-              <>
-                <h2 className="text-xl font-bold">
-                  Narration editor
-                </h2>
-
-                <p className="mt-4 text-slate-400">
-                  Select a book from your library to begin
-                  editing.
-                </p>
-              </>
+            {!activeSection && (
+              <p className="text-slate-400">
+                Select a book and narration section.
+              </p>
             )}
 
-            {selectedBook && !activeSection && (
+            {activeSection && (
               <>
-                <h2 className="break-words text-xl font-bold">
-                  {selectedBook.filename}
-                </h2>
-
-                <p className="mt-4 text-slate-400">
-                  Create narration sections to begin editing this
-                  book.
-                </p>
-
-                <div className="mt-6 rounded-xl bg-slate-950 p-5">
-                  <h3 className="font-semibold">Book details</h3>
-
-                  <dl className="mt-4 grid gap-3 sm:grid-cols-2">
-                    <Statistic
-                      label="Words"
-                      value={selectedBook.word_count.toLocaleString()}
-                    />
-                    <Statistic
-                      label="Estimated audio"
-                      value={`${selectedBook.estimated_minutes} min`}
-                    />
-                    <Statistic
-                      label="File type"
-                      value={selectedBook.file_type}
-                    />
-                    <Statistic
-                      label="Detected chapters"
-                      value={selectedBook.chapter_count.toString()}
-                    />
-                  </dl>
-                </div>
-              </>
-            )}
-
-            {selectedBook && activeSection && (
-              <>
-                <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="flex flex-wrap justify-between gap-4">
                   <div>
                     <p className="text-sm text-cyan-300">
-                      {selectedBook.filename}
+                      {selectedBook?.filename}
                     </p>
 
                     <h2 className="mt-1 text-2xl font-bold">
@@ -735,87 +806,108 @@ export default function Home() {
                     </h2>
 
                     <p className="mt-2 text-sm text-slate-400">
-                      {draftText.trim().split(/\s+/).filter(Boolean)
-                        .length}{" "}
-                      words · Approximately{" "}
-                      {formatDuration(
-                        Math.max(
-                          1,
-                          Math.round(
-                            draftText
-                              .trim()
-                              .split(/\s+/)
-                              .filter(Boolean).length /
-                              160 *
-                              60,
-                          ),
-                        ),
-                      )}
+                      {countWords(draftText)} words
                     </p>
                   </div>
 
                   <span
-                    className={`rounded-full px-3 py-1 text-sm ${
+                    className={
                       dirty
-                        ? "bg-amber-500/15 text-amber-300"
-                        : "bg-emerald-500/15 text-emerald-300"
-                    }`}
+                        ? "text-amber-300"
+                        : "text-emerald-300"
+                    }
                   >
                     {dirty ? "Unsaved changes" : "Saved"}
                   </span>
                 </div>
 
                 <textarea
-                  className="mt-6 min-h-[500px] w-full resize-y rounded-xl border border-slate-700 bg-slate-950 p-5 leading-8 text-slate-200 outline-none focus:border-cyan-500"
+                  className="mt-6 min-h-[480px] w-full resize-y rounded-xl border border-slate-700 bg-slate-950 p-5 leading-8 outline-none focus:border-cyan-500"
                   onChange={(event) => {
                     setDraftText(event.target.value);
                     setDirty(
                       event.target.value !== activeSection.text,
                     );
-                    setSuccessMessage("");
                   }}
+                  onClick={(event) =>
+                    setCursorPosition(
+                      event.currentTarget.selectionStart,
+                    )
+                  }
+                  onKeyUp={(event) =>
+                    setCursorPosition(
+                      event.currentTarget.selectionStart,
+                    )
+                  }
+                  onSelect={(event) =>
+                    setCursorPosition(
+                      event.currentTarget.selectionStart,
+                    )
+                  }
+                  ref={editorRef}
                   spellCheck
                   value={draftText}
                 />
 
-                <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex gap-3">
-                    <button
-                      className="rounded-lg border border-slate-600 px-4 py-2 font-semibold disabled:opacity-40"
-                      disabled={activeSectionIndex <= 0}
-                      onClick={() => moveToSection(-1)}
-                      type="button"
-                    >
-                      Previous
-                    </button>
+                <p className="mt-2 text-xs text-slate-500">
+                  Cursor position: {cursorPosition}
+                </p>
 
-                    <button
-                      className="rounded-lg border border-slate-600 px-4 py-2 font-semibold disabled:opacity-40"
-                      disabled={
-                        activeSectionIndex < 0 ||
-                        activeSectionIndex >=
-                          sections.length - 1
-                      }
-                      onClick={() => moveToSection(1)}
-                      type="button"
-                    >
-                      Next
-                    </button>
-                  </div>
+                <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  <ActionButton
+                    disabled={!dirty || working}
+                    onClick={() => void saveActiveSection()}
+                  >
+                    Save
+                  </ActionButton>
+
+                  <ActionButton
+                    disabled={working}
+                    onClick={() => void splitAtCursor()}
+                  >
+                    Split at cursor
+                  </ActionButton>
+
+                  <ActionButton
+                    disabled={
+                      working ||
+                      dirty ||
+                      activeSectionIndex >= sections.length - 1
+                    }
+                    onClick={() => void mergeWithNext()}
+                  >
+                    Merge with next
+                  </ActionButton>
+
+                  <ActionButton
+                    disabled={
+                      working ||
+                      dirty ||
+                      activeSectionIndex <= 0
+                    }
+                    onClick={() => void moveSection("up")}
+                  >
+                    Move up
+                  </ActionButton>
+
+                  <ActionButton
+                    disabled={
+                      working ||
+                      dirty ||
+                      activeSectionIndex >= sections.length - 1
+                    }
+                    onClick={() => void moveSection("down")}
+                  >
+                    Move down
+                  </ActionButton>
 
                   <button
-                    className="rounded-lg bg-white px-6 py-3 font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={
-                      !dirty ||
-                      savingSection ||
-                      !draftText.trim()
-                    }
-                    onClick={() => void saveActiveSection()}
+                    className="rounded-lg border border-red-500/50 px-4 py-3 font-semibold text-red-300 disabled:opacity-40"
+                    disabled={working || dirty}
+                    onClick={() => void deleteActiveSection()}
                     type="button"
                   >
-                    {savingSection
-                      ? "Saving..."
-                      : "Save section"}
+                    Delete section
                   </button>
                 </div>
               </>
@@ -827,38 +919,59 @@ export default function Home() {
   );
 }
 
-function Statistic({
-  label,
-  value,
+function ActionButton({
+  children,
+  disabled,
+  onClick,
 }: {
-  label: string;
-  value: string;
+  children: React.ReactNode;
+  disabled: boolean;
+  onClick: () => void;
 }) {
   return (
-    <div className="rounded-lg bg-slate-800 p-4">
-      <dt className="text-xs uppercase tracking-wide text-slate-400">
-        {label}
-      </dt>
-      <dd className="mt-2 font-semibold">{value}</dd>
+    <button
+      className="rounded-lg border border-slate-600 px-4 py-3 font-semibold disabled:opacity-40"
+      disabled={disabled}
+      onClick={onClick}
+      type="button"
+    >
+      {children}
+    </button>
+  );
+}
+
+function Message({
+  children,
+  type,
+}: {
+  children: React.ReactNode;
+  type: "error" | "success";
+}) {
+  const classes =
+    type === "error"
+      ? "border-red-500/50 bg-red-500/10 text-red-200"
+      : "border-emerald-500/50 bg-emerald-500/10 text-emerald-200";
+
+  return (
+    <div className={`mt-6 rounded-lg border p-4 ${classes}`}>
+      {children}
     </div>
   );
 }
 
-function formatDate(timestamp: string): string {
-  const date = new Date(timestamp);
+function jsonHeaders(): HeadersInit {
+  return {
+    "Content-Type": "application/json",
+  };
+}
 
-  if (Number.isNaN(date.getTime())) {
-    return timestamp;
-  }
-
-  return new Intl.DateTimeFormat("en-US", {
-    dateStyle: "medium",
-  }).format(date);
+function countWords(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
 function formatDuration(totalSeconds: number): string {
   if (totalSeconds < 60) {
-    return `${totalSeconds} sec`;
+    return `${totalSeconds}s`;
   }
 
   const minutes = Math.floor(totalSeconds / 60);
@@ -866,5 +979,5 @@ function formatDuration(totalSeconds: number): string {
 
   return seconds > 0
     ? `${minutes}m ${seconds}s`
-    : `${minutes} min`;
+    : `${minutes}m`;
 }
