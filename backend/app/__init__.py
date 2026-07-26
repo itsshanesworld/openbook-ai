@@ -1,0 +1,1 @@
+"""OpenBook AI backend package."""
