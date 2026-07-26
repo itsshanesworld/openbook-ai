@@ -40,7 +40,7 @@ interface ErrorResponse {
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-async function requestJson<T>(
+async function requestJson<T extends object>(
   url: string,
   options?: RequestInit,
 ): Promise<T> {
