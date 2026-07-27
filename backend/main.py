@@ -6,7 +6,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.audiobook_service import (
+    recover_interrupted_audiobook_jobs,
+)
 from app.database import create_database_tables
+from app.routers.audiobooks import router as audiobooks_router
 from app.routers.books import router as books_router
 from app.routers.tts import router as tts_router
 
@@ -15,13 +19,14 @@ from app.routers.tts import router as tts_router
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Initialize persistent application resources."""
     create_database_tables()
+    recover_interrupted_audiobook_jobs()
     yield
 
 
 app = FastAPI(
     title="OpenBook AI API",
-    description="Open-source audiobook preparation API.",
-    version="0.5.0",
+    description="Open-source audiobook creation API.",
+    version="0.7.0",
     lifespan=lifespan,
 )
 
@@ -42,6 +47,7 @@ app.add_middleware(
 
 app.include_router(books_router)
 app.include_router(tts_router)
+app.include_router(audiobooks_router)
 
 
 @app.get("/")
@@ -49,7 +55,7 @@ def read_root() -> dict[str, str]:
     """Return basic API information."""
     return {
         "name": "OpenBook AI API",
-        "version": "0.5.0",
+        "version": "0.7.0",
     }
 
 
