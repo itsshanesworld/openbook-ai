@@ -1,1 +1,5 @@
 backend/data/
+__pycache__/
+*.py[cod]
+*.before-*
+*-backup.py
