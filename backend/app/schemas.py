@@ -1,4 +1,4 @@
-"""Request schemas for OpenBook AI."""
+"""API request schemas for OpenBook AI."""
 
 from typing import Literal
 
@@ -35,7 +35,9 @@ class SectionSplit(BaseModel):
         cleaned_value = value.strip()
 
         if not cleaned_value:
-            raise ValueError("Both split sections must contain text.")
+            raise ValueError(
+                "Both split sections must contain text."
+            )
 
         return cleaned_value
 
@@ -47,7 +49,7 @@ class SectionMove(BaseModel):
 
 
 class TtsPreviewRequest(BaseModel):
-    """Local speech preview settings."""
+    """Local speech-preview settings."""
 
     text: str | None = Field(
         default=None,
@@ -75,3 +77,13 @@ class TtsPreviewRequest(BaseModel):
             raise ValueError("Preview text cannot be blank.")
 
         return cleaned_value
+
+
+class AudiobookCreateRequest(BaseModel):
+    """Complete-audiobook generation settings."""
+
+    speed: float = Field(
+        default=1.0,
+        ge=0.75,
+        le=1.5,
+    )

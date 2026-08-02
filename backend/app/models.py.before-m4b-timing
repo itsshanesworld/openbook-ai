@@ -68,26 +68,3 @@ class AudiobookJob(SQLModel, table=True):
     )
     created_at: str = Field(default_factory=utc_timestamp)
     updated_at: str = Field(default_factory=utc_timestamp)
-
-
-class AudiobookSectionTiming(SQLModel, table=True):
-    """Audio timestamps for one narration section."""
-
-    id: int | None = Field(default=None, primary_key=True)
-
-    job_id: int = Field(
-        foreign_key="audiobookjob.id",
-        index=True,
-    )
-
-    section_id: int = Field(
-        foreign_key="narrationsection.id",
-        index=True,
-    )
-
-    position: int
-
-    start_ms: int
-
-    end_ms: int
-

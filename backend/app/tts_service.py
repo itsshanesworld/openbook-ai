@@ -28,7 +28,7 @@ _voice_lock = threading.RLock()
 
 
 class TtsUnavailableError(RuntimeError):
-    """Raised when the local speech engine is unavailable."""
+    """Raised when the local Piper engine is unavailable."""
 
 
 def get_tts_status() -> dict[str, object]:
@@ -47,11 +47,8 @@ def get_tts_status() -> dict[str, object]:
 
 
 def prepare_preview_text(text: str) -> tuple[str, bool]:
-    """Normalize and safely shorten preview text."""
-    cleaned_text = " ".join(text.split())
-
-    if not cleaned_text:
-        raise ValueError("Preview text cannot be blank.")
+    """Normalize and shorten text for a quick preview."""
+    cleaned_text = normalize_speech_text(text)
 
     if len(cleaned_text) <= MAX_PREVIEW_CHARACTERS:
         return cleaned_text, False
@@ -69,11 +66,18 @@ def synthesize_wav_preview(
     text: str,
     speed: float,
 ) -> bytes:
-    """Generate a WAV speech preview entirely in memory."""
+    """Generate a size-limited WAV preview."""
     preview_text, _ = prepare_preview_text(text)
+    return synthesize_wav(preview_text, speed)
 
-    if speed < 0.75 or speed > 1.5:
-        raise ValueError("Preview speed must be between 0.75 and 1.5.")
+
+def synthesize_wav(
+    text: str,
+    speed: float,
+) -> bytes:
+    """Generate complete WAV audio in memory."""
+    speech_text = normalize_speech_text(text)
+    validate_speed(speed)
 
     synthesis_config = SynthesisConfig(
         length_scale=1.0 / speed,
@@ -85,12 +89,37 @@ def synthesize_wav_preview(
 
         with wave.open(audio_buffer, "wb") as wav_file:
             voice.synthesize_wav(
-                preview_text,
+                speech_text,
                 wav_file,
                 syn_config=synthesis_config,
             )
 
-        return audio_buffer.getvalue()
+        audio_bytes = audio_buffer.getvalue()
+
+    if not audio_bytes.startswith(b"RIFF"):
+        raise RuntimeError(
+            "Piper did not produce a valid WAV file."
+        )
+
+    return audio_bytes
+
+
+def normalize_speech_text(text: str) -> str:
+    """Normalize text before speech generation."""
+    cleaned_text = " ".join(text.split())
+
+    if not cleaned_text:
+        raise ValueError("Speech text cannot be blank.")
+
+    return cleaned_text
+
+
+def validate_speed(speed: float) -> None:
+    """Validate the supported narration speed."""
+    if not 0.75 <= speed <= 1.5:
+        raise ValueError(
+            "Narration speed must be between 0.75 and 1.5."
+        )
 
 
 def _load_voice() -> PiperVoice:
@@ -102,12 +131,12 @@ def _load_voice() -> PiperVoice:
 
     if not MODEL_PATH.is_file():
         raise TtsUnavailableError(
-            f"Piper model is missing: {MODEL_PATH.name}"
+            f"Piper model is missing: {MODEL_PATH}"
         )
 
     if not CONFIG_PATH.is_file():
         raise TtsUnavailableError(
-            f"Piper configuration is missing: {CONFIG_PATH.name}"
+            f"Piper configuration is missing: {CONFIG_PATH}"
         )
 
     try:
