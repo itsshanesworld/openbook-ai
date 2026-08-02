@@ -25,6 +25,12 @@ from app.export_service import (
     get_mp3_export_info,
     require_mp3_export,
 )
+from app.m4b_service import (
+    create_m4b_export as build_m4b_export,
+    delete_m4b_export,
+    get_m4b_export_info,
+    require_m4b_export,
+)
 from app.models import AudiobookJob, Book
 from app.schemas import AudiobookCreateRequest
 from app.tts_service import get_tts_status
@@ -282,6 +288,85 @@ def download_mp3_audiobook(
     )
 
 
+@router.post("/audiobook-jobs/{job_id}/exports/m4b")
+def generate_m4b_export(
+    job_id: int,
+    session: DatabaseSession,
+) -> dict[str, object]:
+    """Create a chaptered M4B from a completed WAV."""
+    job, book = get_job_and_book(
+        session,
+        job_id,
+    )
+
+    try:
+        build_m4b_export(
+            job,
+            book.filename,
+        )
+    except ExportError as error:
+        raise HTTPException(
+            status_code=422,
+            detail=str(error),
+        ) from error
+
+    return serialize_job(
+        job,
+        book.filename,
+    )
+
+
+@router.get("/audiobook-jobs/{job_id}/audio/m4b")
+def play_m4b_audiobook(
+    job_id: int,
+    session: DatabaseSession,
+) -> FileResponse:
+    """Play an existing M4B audiobook."""
+    job, _ = get_job_and_book(
+        session,
+        job_id,
+    )
+
+    try:
+        output_path = require_m4b_export(job)
+    except ExportError as error:
+        raise HTTPException(
+            status_code=404,
+            detail=str(error),
+        ) from error
+
+    return FileResponse(
+        path=output_path,
+        media_type="audio/mp4",
+    )
+
+
+@router.get("/audiobook-jobs/{job_id}/download/m4b")
+def download_m4b_audiobook(
+    job_id: int,
+    session: DatabaseSession,
+) -> FileResponse:
+    """Download an existing M4B audiobook."""
+    job, _ = get_job_and_book(
+        session,
+        job_id,
+    )
+
+    try:
+        output_path = require_m4b_export(job)
+    except ExportError as error:
+        raise HTTPException(
+            status_code=404,
+            detail=str(error),
+        ) from error
+
+    return FileResponse(
+        path=output_path,
+        media_type="audio/mp4",
+        filename=output_path.name,
+    )
+
+
 @router.delete("/audiobook-jobs/{job_id}")
 def delete_audiobook_job(
     job_id: int,
@@ -303,6 +388,7 @@ def delete_audiobook_job(
         )
 
     try:
+        delete_m4b_export(job)
         delete_mp3_export(job)
         delete_job_output(job)
 
@@ -415,4 +501,5 @@ def serialize_job(
         "created_at": job.created_at,
         "updated_at": job.updated_at,
         "mp3": get_mp3_export_info(job),
+        "m4b": get_m4b_export_info(job),
     }

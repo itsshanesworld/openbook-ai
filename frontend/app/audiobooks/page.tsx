@@ -22,6 +22,12 @@ interface Mp3Export {
   size_bytes: number | null;
 }
 
+interface M4bExport {
+  available: boolean;
+  filename: string | null;
+  size_bytes: number | null;
+}
+
 interface AudiobookJob {
   id: number;
   book_id: number;
@@ -36,6 +42,7 @@ interface AudiobookJob {
   error_message: string | null;
   updated_at: string;
   mp3: Mp3Export;
+  m4b: M4bExport;
 }
 
 interface ErrorResponse {
@@ -88,7 +95,9 @@ export default function AudiobooksPage() {
   const [speed, setSpeed] = useState(1);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
-  const [exportingId, setExportingId] =
+  const [exportingMp3Id, setExportingMp3Id] =
+    useState<number | null>(null);
+  const [exportingM4bId, setExportingM4bId] =
     useState<number | null>(null);
   const [deletingId, setDeletingId] =
     useState<number | null>(null);
@@ -169,14 +178,17 @@ export default function AudiobooksPage() {
         `${API_URL}/books/${bookId}/audiobook-jobs`,
         {
           method: "POST",
-          headers: jsonHeaders(),
+          headers: {
+            "Content-Type": "application/json",
+          },
           body: JSON.stringify({ speed }),
         },
       );
 
       setJobs((current) => [job, ...current]);
+
       setMessage(
-        "WAV audiobook generation started. Keep the backend running.",
+        "WAV audiobook generation started. Keep OpenBook AI running.",
       );
     } catch (caughtError) {
       showError(
@@ -189,7 +201,7 @@ export default function AudiobooksPage() {
   }
 
   async function createMp3(jobId: number): Promise<void> {
-    setExportingId(jobId);
+    setExportingMp3Id(jobId);
     clearMessages();
 
     try {
@@ -207,7 +219,7 @@ export default function AudiobooksPage() {
       );
 
       setMessage(
-        "Compressed MP3 export created successfully.",
+        "Compressed MP3 audiobook created successfully.",
       );
     } catch (caughtError) {
       showError(
@@ -215,13 +227,44 @@ export default function AudiobooksPage() {
         "The MP3 export could not be created.",
       );
     } finally {
-      setExportingId(null);
+      setExportingMp3Id(null);
+    }
+  }
+
+  async function createM4b(jobId: number): Promise<void> {
+    setExportingM4bId(jobId);
+    clearMessages();
+
+    try {
+      const updatedJob = await requestJson<AudiobookJob>(
+        `${API_URL}/audiobook-jobs/${jobId}/exports/m4b`,
+        {
+          method: "POST",
+        },
+      );
+
+      setJobs((current) =>
+        current.map((job) =>
+          job.id === updatedJob.id ? updatedJob : job,
+        ),
+      );
+
+      setMessage(
+        "Chaptered M4B audiobook created successfully.",
+      );
+    } catch (caughtError) {
+      showError(
+        caughtError,
+        "The M4B export could not be created.",
+      );
+    } finally {
+      setExportingM4bId(null);
     }
   }
 
   async function deleteJob(jobId: number): Promise<void> {
     const approved = window.confirm(
-      "Delete this job and all of its generated audio?",
+      "Delete this job and all generated WAV, MP3, and M4B files?",
     );
 
     if (!approved) {
@@ -292,8 +335,8 @@ export default function AudiobooksPage() {
             </h1>
 
             <p className="mt-3 max-w-2xl leading-7 text-slate-400">
-              Generate the original WAV audiobook, then create
-              a smaller MP3 for playback and sharing.
+              Generate a WAV master, a compressed MP3, or a
+              chaptered M4B audiobook.
             </p>
           </div>
 
@@ -353,8 +396,10 @@ export default function AudiobooksPage() {
                     <p>
                       {selectedBook.word_count.toLocaleString()} words
                     </p>
+
                     <p className="mt-2 text-slate-400">
-                      Approximately {selectedBook.estimated_minutes} minutes
+                      Approximately{" "}
+                      {selectedBook.estimated_minutes} minutes
                     </p>
                   </div>
                 )}
@@ -389,7 +434,11 @@ export default function AudiobooksPage() {
 
                 <button
                   className="mt-7 w-full rounded-lg bg-white px-5 py-3 font-semibold text-slate-950 disabled:opacity-50"
-                  disabled={!bookId || creating || activeJob}
+                  disabled={
+                    !bookId ||
+                    creating ||
+                    activeJob
+                  }
                   onClick={() => void createAudiobook()}
                   type="button"
                 >
@@ -472,7 +521,7 @@ export default function AudiobooksPage() {
                           className="mt-3 w-full"
                           controls
                           preload="metadata"
-                          src={`${API_URL}/audiobook-jobs/${job.id}/audio?v=${encodeURIComponent(job.updated_at)}`}
+                          src={`${API_URL}/audiobook-jobs/${job.id}/audio`}
                         />
 
                         <div className="mt-4 flex flex-wrap items-center gap-4">
@@ -485,7 +534,9 @@ export default function AudiobooksPage() {
 
                           {job.output_size_bytes && (
                             <span className="text-sm text-slate-400">
-                              {formatFileSize(job.output_size_bytes)}
+                              {formatFileSize(
+                                job.output_size_bytes,
+                              )}
                             </span>
                           )}
                         </div>
@@ -496,14 +547,18 @@ export default function AudiobooksPage() {
                           Compressed MP3
                         </h4>
 
-                        {!job.mp3.available ? (
+                        {!job.mp3?.available ? (
                           <button
                             className="mt-4 rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50"
-                            disabled={exportingId === job.id}
-                            onClick={() => void createMp3(job.id)}
+                            disabled={
+                              exportingMp3Id === job.id
+                            }
+                            onClick={() =>
+                              void createMp3(job.id)
+                            }
                             type="button"
                           >
-                            {exportingId === job.id
+                            {exportingMp3Id === job.id
                               ? "Creating MP3..."
                               : "Create MP3 export"}
                           </button>
@@ -513,7 +568,7 @@ export default function AudiobooksPage() {
                               className="mt-3 w-full"
                               controls
                               preload="metadata"
-                              src={`${API_URL}/audiobook-jobs/${job.id}/audio/mp3?v=${encodeURIComponent(job.updated_at)}`}
+                              src={`${API_URL}/audiobook-jobs/${job.id}/audio/mp3`}
                             />
 
                             <div className="mt-4 flex flex-wrap items-center gap-4">
@@ -526,7 +581,64 @@ export default function AudiobooksPage() {
 
                               {job.mp3.size_bytes && (
                                 <span className="text-sm text-slate-400">
-                                  {formatFileSize(job.mp3.size_bytes)}
+                                  {formatFileSize(
+                                    job.mp3.size_bytes,
+                                  )}
+                                </span>
+                              )}
+                            </div>
+                          </>
+                        )}
+                      </div>
+
+                      <div className="rounded-xl border border-slate-700 bg-slate-900 p-4">
+                        <h4 className="font-semibold">
+                          Chaptered M4B
+                        </h4>
+
+                        <p className="mt-2 text-sm leading-6 text-slate-400">
+                          M4B uses compressed AAC audio and
+                          includes chapter markers for audiobook
+                          players.
+                        </p>
+
+                        {!job.m4b?.available ? (
+                          <button
+                            className="mt-4 rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50"
+                            disabled={
+                              exportingM4bId === job.id
+                            }
+                            onClick={() =>
+                              void createM4b(job.id)
+                            }
+                            type="button"
+                          >
+                            {exportingM4bId === job.id
+                              ? "Creating M4B..."
+                              : "Create M4B export"}
+                          </button>
+                        ) : (
+                          <>
+                            <audio
+                              className="mt-4 w-full"
+                              controls
+                              preload="metadata"
+                              src={`${API_URL}/audiobook-jobs/${job.id}/audio/m4b`}
+                            />
+
+                            <div className="mt-4 flex flex-wrap items-center gap-4">
+                              <a
+                                className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950"
+                                href={`${API_URL}/audiobook-jobs/${job.id}/download/m4b`}
+                              >
+                                Download M4B
+                              </a>
+
+                              {job.m4b.size_bytes && (
+                                <span className="text-sm text-slate-400">
+                                  {formatFileSize(
+                                    job.m4b.size_bytes,
+                                  )}
                                 </span>
                               )}
                             </div>
@@ -537,7 +649,9 @@ export default function AudiobooksPage() {
                       <button
                         className="text-sm font-semibold text-red-300 disabled:opacity-50"
                         disabled={deletingId === job.id}
-                        onClick={() => void deleteJob(job.id)}
+                        onClick={() =>
+                          void deleteJob(job.id)
+                        }
                         type="button"
                       >
                         {deletingId === job.id
@@ -550,7 +664,9 @@ export default function AudiobooksPage() {
                   {job.status === "failed" && (
                     <button
                       className="mt-4 text-sm font-semibold text-red-300"
-                      onClick={() => void deleteJob(job.id)}
+                      onClick={() =>
+                        void deleteJob(job.id)
+                      }
                       type="button"
                     >
                       Delete failed job
@@ -600,16 +716,12 @@ function Message({
       : "border-emerald-500/50 bg-emerald-500/10 text-emerald-200";
 
   return (
-    <div className={`mt-6 rounded-lg border p-4 ${classes}`}>
+    <div
+      className={`mt-6 rounded-lg border p-4 ${classes}`}
+    >
       {children}
     </div>
   );
-}
-
-function jsonHeaders(): HeadersInit {
-  return {
-    "Content-Type": "application/json",
-  };
 }
 
 function formatFileSize(bytes: number): string {
