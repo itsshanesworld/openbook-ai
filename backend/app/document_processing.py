@@ -145,11 +145,17 @@ def normalize_text(text: str) -> str:
 
 
 def detect_chapters(text: str) -> list[str]:
-    """Detect common chapter headings."""
-    pattern = re.compile(
+    """Detect common numbered and standalone book headings."""
+    numbered_pattern = re.compile(
         r"^(chapter|part|book|section)\s+"
         r"([0-9]+|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten)"
         r"(?:\s*[:.-]\s*|\s*$|\s+.+)",
+        re.IGNORECASE,
+    )
+
+    standalone_pattern = re.compile(
+        r"^(introduction|prologue|preface|foreword|epilogue|afterword)"
+        r"(?:\s*[:.-]\s*.+)?$",
         re.IGNORECASE,
     )
 
@@ -162,12 +168,19 @@ def detect_chapters(text: str) -> list[str]:
         if not candidate or len(candidate) > 120:
             continue
 
-        if pattern.match(candidate):
-            key = candidate.casefold()
+        is_heading = (
+            numbered_pattern.match(candidate)
+            or standalone_pattern.match(candidate)
+        )
 
-            if key not in seen:
-                chapters.append(candidate)
-                seen.add(key)
+        if not is_heading:
+            continue
+
+        key = candidate.casefold()
+
+        if key not in seen:
+            chapters.append(candidate)
+            seen.add(key)
 
     return chapters
 
@@ -176,11 +189,16 @@ def split_into_narration_sections(
     text: str,
     target_words: int = 350,
 ) -> list[str]:
-    """Split book text into narration-sized, sentence-aware sections."""
+    """Split narration while keeping chapter boundaries intact."""
     normalized_text = normalize_text(text)
 
     if not normalized_text:
         return []
+
+    chapter_headings = {
+        heading.casefold()
+        for heading in detect_chapters(normalized_text)
+    }
 
     paragraphs = [
         paragraph.strip()
@@ -191,6 +209,7 @@ def split_into_narration_sections(
     sections: list[str] = []
     current_parts: list[str] = []
     current_word_count = 0
+    chapter_heading_seen = False
 
     def flush_current_section() -> None:
         nonlocal current_parts
@@ -223,18 +242,21 @@ def split_into_narration_sections(
         if current_word_count >= target_words:
             flush_current_section()
 
-    for paragraph in paragraphs:
-        paragraph_word_count = len(paragraph.split())
+    def add_size_aware_piece(piece: str) -> None:
+        piece = piece.strip()
 
-        if paragraph_word_count <= target_words:
-            add_piece(paragraph)
-            continue
+        if not piece:
+            return
+
+        if len(piece.split()) <= target_words:
+            add_piece(piece)
+            return
 
         sentences = [
             sentence.strip()
             for sentence in re.split(
                 r"(?<=[.!?])\s+",
-                paragraph,
+                piece,
             )
             if sentence.strip()
         ]
@@ -250,6 +272,62 @@ def split_into_narration_sections(
                 add_piece(
                     " ".join(words[start : start + target_words])
                 )
+
+    def split_at_chapter_headings(
+        paragraph: str,
+    ) -> list[tuple[str, bool]]:
+        lines = [
+            line.strip()
+            for line in paragraph.splitlines()
+            if line.strip()
+        ]
+
+        if not lines:
+            return []
+
+        pieces: list[tuple[str, bool]] = []
+        current_lines: list[str] = []
+        starts_with_heading = False
+
+        for line in lines:
+            is_heading = line.casefold() in chapter_headings
+
+            if is_heading:
+                if current_lines:
+                    pieces.append(
+                        (
+                            "\n".join(current_lines),
+                            starts_with_heading,
+                        )
+                    )
+
+                current_lines = [line]
+                starts_with_heading = True
+                continue
+
+            current_lines.append(line)
+
+        if current_lines:
+            pieces.append(
+                (
+                    "\n".join(current_lines),
+                    starts_with_heading,
+                )
+            )
+
+        return pieces
+
+    for paragraph in paragraphs:
+        pieces = split_at_chapter_headings(paragraph)
+
+        for piece, starts_with_heading in pieces:
+            if starts_with_heading:
+                if chapter_heading_seen:
+                    flush_current_section()
+
+                chapter_heading_seen = True
+
+            add_size_aware_piece(piece)
 
     flush_current_section()
 
