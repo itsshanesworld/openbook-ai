@@ -14,8 +14,17 @@ from fastapi import (
     Query,
     UploadFile,
 )
+from fastapi.responses import FileResponse
 from sqlmodel import Session, select
 
+from app.cover_service import (
+    CoverError,
+    delete_cover,
+    get_cover_info,
+    get_cover_media_type,
+    require_cover,
+    save_cover,
+)
 from app.database import get_session
 from app.document_processing import (
     ALLOWED_EXTENSIONS,
@@ -167,6 +176,90 @@ async def upload_book(
             temporary_path.unlink(missing_ok=True)
 
 
+@router.post(
+    "/books/{book_id}/cover",
+    status_code=201,
+)
+async def upload_book_cover(
+    book_id: int,
+    file: Annotated[
+        UploadFile,
+        File(description="JPG or PNG cover artwork"),
+    ],
+    session: DatabaseSession,
+) -> dict[str, object]:
+    """Store custom cover artwork for one book."""
+    get_existing_book(
+        session,
+        book_id,
+    )
+
+    try:
+        content = await file.read(
+            10 * 1024 * 1024 + 1
+        )
+
+        save_cover(
+            book_id,
+            file.filename or "cover",
+            content,
+        )
+    except CoverError as error:
+        raise HTTPException(
+            status_code=422,
+            detail=str(error),
+        ) from error
+    finally:
+        await file.close()
+
+    return get_cover_info(book_id)
+
+
+@router.get("/books/{book_id}/cover")
+def get_book_cover(
+    book_id: int,
+    session: DatabaseSession,
+) -> FileResponse:
+    """Return custom cover artwork for one book."""
+    get_existing_book(
+        session,
+        book_id,
+    )
+
+    try:
+        path = require_cover(book_id)
+    except CoverError as error:
+        raise HTTPException(
+            status_code=404,
+            detail=str(error),
+        ) from error
+
+    return FileResponse(
+        path,
+        media_type=get_cover_media_type(path),
+        filename=path.name,
+    )
+
+
+@router.delete("/books/{book_id}/cover")
+def remove_book_cover(
+    book_id: int,
+    session: DatabaseSession,
+) -> dict[str, object]:
+    """Delete custom cover artwork."""
+    get_existing_book(
+        session,
+        book_id,
+    )
+
+    delete_cover(book_id)
+
+    return {
+        "deleted": True,
+        "book_id": book_id,
+    }
+
+
 @router.delete("/books/{book_id}")
 def delete_book(
     book_id: int,
@@ -180,6 +273,8 @@ def delete_book(
 
     for section in get_sections(session, book_id):
         session.delete(section)
+
+    delete_cover(book_id)
 
     session.delete(book)
     session.commit()
@@ -538,6 +633,9 @@ def serialize_book_summary(
         "word_count": book.word_count,
         "estimated_minutes": book.estimated_minutes,
         "chapter_count": chapter_count,
+        "cover": get_cover_info(
+            require_book_id(book)
+        ),
         "created_at": book.created_at,
     }
 

@@ -19,6 +19,13 @@ interface Chapter {
   title: string;
 }
 
+interface CoverInfo {
+  available: boolean;
+  filename: string | null;
+  size_bytes: number | null;
+  media_type: string | null;
+}
+
 interface BookSummary {
   id: number;
   filename: string;
@@ -28,6 +35,7 @@ interface BookSummary {
   word_count: number;
   estimated_minutes: number;
   chapter_count: number;
+  cover: CoverInfo;
   created_at: string;
 }
 
@@ -164,6 +172,14 @@ export default function Home() {
   const [dirty, setDirty] = useState(false);
   const [selectedFile, setSelectedFile] =
     useState<File | null>(null);
+  const [selectedCoverFile, setSelectedCoverFile] =
+    useState<File | null>(null);
+  const [uploadingCover, setUploadingCover] =
+    useState(false);
+  const [removingCover, setRemovingCover] =
+    useState(false);
+  const [coverVersion, setCoverVersion] =
+    useState(0);
   const [targetWords, setTargetWords] = useState(350);
   const [previewSpeed, setPreviewSpeed] = useState(1);
   const [audioUrl, setAudioUrl] =
@@ -338,6 +354,135 @@ export default function Home() {
       showError(uploadError, "The upload failed.");
     } finally {
       setUploading(false);
+    }
+  }
+
+  function handleCoverFileChange(
+    event: ChangeEvent<HTMLInputElement>,
+  ): void {
+    setSelectedCoverFile(
+      event.target.files?.[0] ?? null,
+    );
+    clearMessages();
+  }
+
+  async function refreshSelectedBook(
+    bookId: number,
+  ): Promise<void> {
+    const refreshedBook = await requestJson<BookDetail>(
+      `${API_URL}/books/${bookId}`,
+    );
+
+    setSelectedBook(refreshedBook);
+    await loadBooks();
+  }
+
+  async function uploadCover(): Promise<void> {
+    if (!selectedBook) {
+      setError("Open a book before uploading a cover.");
+      return;
+    }
+
+    if (!selectedCoverFile) {
+      setError("Choose a JPG or PNG cover first.");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append(
+      "file",
+      selectedCoverFile,
+    );
+
+    setUploadingCover(true);
+    clearMessages();
+
+    try {
+      await requestJson<CoverInfo>(
+        `${API_URL}/books/${selectedBook.id}/cover`,
+        {
+          method: "POST",
+          body: formData,
+        },
+      );
+
+      await refreshSelectedBook(
+        selectedBook.id,
+      );
+
+      setCoverVersion(
+        (current) => current + 1,
+      );
+
+      setSelectedCoverFile(null);
+
+      const coverInput =
+        document.querySelector<HTMLInputElement>(
+          "#cover-file",
+        );
+
+      if (coverInput) {
+        coverInput.value = "";
+      }
+
+      setSuccessMessage(
+        "Cover artwork was uploaded.",
+      );
+    } catch (uploadError) {
+      showError(
+        uploadError,
+        "The cover could not be uploaded.",
+      );
+    } finally {
+      setUploadingCover(false);
+    }
+  }
+
+  async function removeCover(): Promise<void> {
+    if (!selectedBook) {
+      return;
+    }
+
+    const approved = window.confirm(
+      "Remove this book's cover artwork?",
+    );
+
+    if (!approved) {
+      return;
+    }
+
+    setRemovingCover(true);
+    clearMessages();
+
+    try {
+      await requestJson<{
+        deleted: boolean;
+        book_id: number;
+      }>(
+        `${API_URL}/books/${selectedBook.id}/cover`,
+        {
+          method: "DELETE",
+        },
+      );
+
+      await refreshSelectedBook(
+        selectedBook.id,
+      );
+
+      setCoverVersion(
+        (current) => current + 1,
+      );
+
+      setSuccessMessage(
+        "Cover artwork was removed.",
+      );
+    } catch (deleteError) {
+      showError(
+        deleteError,
+        "The cover could not be removed.",
+      );
+    } finally {
+      setRemovingCover(false);
     }
   }
 
@@ -1041,6 +1186,112 @@ export default function Home() {
                   </span>
                 </div>
 
+                <div className="mt-6 rounded-2xl border border-slate-700 bg-slate-950 p-5">
+                  <div className="grid gap-5 md:grid-cols-[180px_1fr]">
+                    <div className="flex aspect-square items-center justify-center overflow-hidden rounded-xl border border-slate-700 bg-slate-900">
+                      {selectedBook?.cover.available ? (
+                        <img
+                          alt={`Cover artwork for ${selectedBook.filename}`}
+                          className="h-full w-full object-cover"
+                          src={`${API_URL}/books/${selectedBook.id}/cover?v=${coverVersion}`}
+                        />
+                      ) : (
+                        <div className="px-5 text-center">
+                          <div className="text-4xl">
+                            📚
+                          </div>
+
+                          <p className="mt-3 text-sm text-slate-500">
+                            No cover artwork
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    <div>
+                      <h3 className="text-lg font-bold">
+                        Cover artwork
+                      </h3>
+
+                      <p className="mt-2 text-sm leading-6 text-slate-400">
+                        Upload a JPG or PNG cover. OpenBook AI
+                        will embed it into future M4B exports.
+                      </p>
+
+                      <div className="mt-5">
+                        <label
+                          className="text-sm font-semibold"
+                          htmlFor="cover-file"
+                        >
+                          Choose cover image
+                        </label>
+
+                        <input
+                          accept="image/jpeg,image/png"
+                          className="mt-2 block w-full text-sm text-slate-300 file:mr-4 file:rounded-lg file:border-0 file:bg-slate-700 file:px-4 file:py-2 file:font-semibold file:text-slate-100 hover:file:bg-slate-600"
+                          id="cover-file"
+                          onChange={handleCoverFileChange}
+                          type="file"
+                        />
+
+                        {selectedCoverFile && (
+                          <p className="mt-2 text-xs text-cyan-300">
+                            Selected: {selectedCoverFile.name}
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="mt-5 flex flex-wrap gap-3">
+                        <button
+                          className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
+                          disabled={
+                            !selectedCoverFile ||
+                            uploadingCover ||
+                            removingCover
+                          }
+                          onClick={() =>
+                            void uploadCover()
+                          }
+                          type="button"
+                        >
+                          {uploadingCover
+                            ? "Uploading..."
+                            : "Upload cover"}
+                        </button>
+
+                        {selectedBook?.cover.available && (
+                          <button
+                            className="rounded-lg border border-red-500/50 px-5 py-2 font-semibold text-red-300 disabled:cursor-not-allowed disabled:opacity-40"
+                            disabled={
+                              uploadingCover ||
+                              removingCover
+                            }
+                            onClick={() =>
+                              void removeCover()
+                            }
+                            type="button"
+                          >
+                            {removingCover
+                              ? "Removing..."
+                              : "Remove cover"}
+                          </button>
+                        )}
+                      </div>
+
+                      {selectedBook?.cover.available && (
+                        <p className="mt-4 text-xs text-slate-500">
+                          Stored locally
+                          {selectedBook.cover.size_bytes
+                            ? ` · ${formatFileSize(
+                                selectedBook.cover.size_bytes,
+                              )}`
+                            : ""}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
                 <textarea
                   className="mt-6 min-h-[480px] w-full resize-y rounded-xl border border-slate-700 bg-slate-950 p-5 leading-8 outline-none focus:border-cyan-500"
                   onChange={(event) => {
@@ -1327,3 +1578,26 @@ function formatDuration(totalSeconds: number): string {
     ? `${minutes}m ${seconds}s`
     : `${minutes}m`;
 }
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+
+  const kilobytes = bytes / 1024;
+
+  if (kilobytes < 1024) {
+    return `${kilobytes.toFixed(1)} KB`;
+  }
+
+  const megabytes = kilobytes / 1024;
+
+  if (megabytes < 1024) {
+    return `${megabytes.toFixed(1)} MB`;
+  }
+
+  const gigabytes = megabytes / 1024;
+
+  return `${gigabytes.toFixed(1)} GB`;
+}
+

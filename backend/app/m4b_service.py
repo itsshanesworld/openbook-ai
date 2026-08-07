@@ -12,6 +12,7 @@ from pathlib import Path
 
 from sqlmodel import Session, select
 
+from app.cover_service import get_cover_path
 from app.database import engine
 from app.document_processing import detect_chapters
 from app.export_service import (
@@ -90,6 +91,10 @@ def create_m4b_export(
             timings,
         )
 
+        cover_path = get_cover_path(
+            job.book_id
+        )
+
         ensure_m4b_space()
 
         temporary_output = output_path.with_name(
@@ -128,24 +133,65 @@ def create_m4b_export(
                 str(source_path),
                 "-i",
                 str(metadata_path),
-                "-map",
-                "0:a:0",
-                "-map_metadata",
-                "1",
-                "-map_chapters",
-                "1",
-                "-c:a",
-                "aac",
-                "-b:a",
-                M4B_BITRATE,
-                "-ac",
-                "1",
-                "-movflags",
-                "+faststart",
-                "-f",
-                "ipod",
-                str(temporary_output),
             ]
+
+            if cover_path is not None:
+                command.extend(
+                    [
+                        "-i",
+                        str(cover_path),
+                    ]
+                )
+
+            command.extend(
+                [
+                    "-map",
+                    "0:a:0",
+                ]
+            )
+
+            if cover_path is not None:
+                command.extend(
+                    [
+                        "-map",
+                        "2:v:0",
+                    ]
+                )
+
+            command.extend(
+                [
+                    "-map_metadata",
+                    "1",
+                    "-map_chapters",
+                    "1",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    M4B_BITRATE,
+                    "-ac",
+                    "1",
+                ]
+            )
+
+            if cover_path is not None:
+                command.extend(
+                    [
+                        "-c:v",
+                        "mjpeg",
+                        "-disposition:v:0",
+                        "attached_pic",
+                    ]
+                )
+
+            command.extend(
+                [
+                    "-movflags",
+                    "+faststart",
+                    "-f",
+                    "ipod",
+                    str(temporary_output),
+                ]
+            )
 
             result = subprocess.run(
                 command,
