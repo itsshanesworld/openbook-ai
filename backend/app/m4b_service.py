@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import tempfile
@@ -12,6 +13,7 @@ from pathlib import Path
 from sqlmodel import Session, select
 
 from app.database import engine
+from app.document_processing import detect_chapters
 from app.export_service import (
     AUDIOBOOK_DIRECTORY,
     ExportError,
@@ -110,6 +112,7 @@ def create_m4b_export(
                         book_filename,
                     ),
                     markers,
+                    author=get_audiobook_author(job),
                 ),
                 encoding="utf-8",
             )
@@ -543,9 +546,81 @@ def detect_title_from_text(
     return fallback_title
 
 
+def get_audiobook_author(
+    job: AudiobookJob,
+) -> str | None:
+    """Return a detected author when the source includes one."""
+    with Session(engine) as session:
+        book = session.get(
+            Book,
+            job.book_id,
+        )
+
+    if book is None:
+        return None
+
+    return detect_author_from_text(
+        book.extracted_text,
+    )
+
+
+def detect_author_from_text(
+    text: str,
+) -> str | None:
+    """Detect an explicit author byline before book content."""
+    chapter_headings = {
+        " ".join(title.split()).casefold()
+        for title in detect_chapters(text)
+    }
+
+    author_pattern = re.compile(
+        r"^(?:by\s+|written\s+by\s+|author\s*[:.-]\s*)"
+        r"(.+)$",
+        re.IGNORECASE,
+    )
+
+    for raw_line in text.splitlines():
+        candidate = " ".join(raw_line.split())
+
+        if not candidate:
+            continue
+
+        normalized = candidate.casefold()
+
+        if normalized in chapter_headings:
+            break
+
+        match = author_pattern.match(candidate)
+
+        if match is None:
+            continue
+
+        author = match.group(1).strip(" .:-")
+
+        if not author:
+            continue
+
+        if len(author) > 100:
+            continue
+
+        if len(author.split()) > 12:
+            continue
+
+        if not any(
+            character.isalpha()
+            for character in author
+        ):
+            continue
+
+        return author
+
+    return None
+
+
 def build_chapter_metadata(
     book_title: str,
     markers: list[ChapterMarker],
+    author: str | None = None,
 ) -> str:
     """Build FFmpeg chapter metadata."""
     title = (
@@ -556,8 +631,17 @@ def build_chapter_metadata(
     lines = [
         ";FFMETADATA1",
         f"title={escape_metadata(title)}",
-        "artist=OpenBook AI",
     ]
+
+    if author:
+        lines.extend(
+            [
+                f"artist={escape_metadata(author)}",
+                f"album_artist={escape_metadata(author)}",
+            ]
+        )
+
+    lines.append("encoded_by=OpenBook AI")
 
     for marker in markers:
         lines.extend(
