@@ -29,6 +29,7 @@ from app.database import get_session
 from app.document_processing import (
     ALLOWED_EXTENSIONS,
     detect_chapters,
+    extract_epub_cover,
     extract_text,
     normalize_text,
     save_upload,
@@ -92,6 +93,8 @@ async def upload_book(
         )
 
     temporary_path: Path | None = None
+    book_id: int | None = None
+    book_committed = False
 
     try:
         temporary_path, size_bytes = await save_upload(
@@ -129,6 +132,26 @@ async def upload_book(
 
         book_id = require_book_id(book)
 
+        if extension == ".epub":
+            extracted_cover = extract_epub_cover(
+                temporary_path
+            )
+
+            if extracted_cover is not None:
+                (
+                    cover_filename,
+                    cover_content,
+                ) = extracted_cover
+
+                try:
+                    save_cover(
+                        book_id,
+                        cover_filename,
+                        cover_content,
+                    )
+                except CoverError:
+                    pass
+
         chapters = [
             Chapter(
                 book_id=book_id,
@@ -157,14 +180,28 @@ async def upload_book(
         session.add_all(chapters)
         session.add_all(narration_sections)
         session.commit()
+        book_committed = True
         session.refresh(book)
 
         return serialize_book_detail(book, chapters)
     except HTTPException:
         session.rollback()
+
+        if (
+            book_id is not None
+            and not book_committed
+        ):
+            delete_cover(book_id)
+
         raise
     except Exception as error:
         session.rollback()
+
+        if (
+            book_id is not None
+            and not book_committed
+        ):
+            delete_cover(book_id)
         raise HTTPException(
             status_code=500,
             detail=f"The book could not be stored: {error}",

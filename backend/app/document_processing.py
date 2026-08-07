@@ -135,6 +135,178 @@ def extract_epub(path: Path) -> str:
     return "\n\n".join(sections)
 
 
+def extract_epub_cover(
+    path: Path,
+) -> tuple[str, bytes] | None:
+    """Extract JPG or PNG cover artwork from an EPUB."""
+    book = epub.read_epub(str(path))
+
+    cover_item = find_epub_cover_item(book)
+
+    if cover_item is None:
+        return None
+
+    content = bytes(
+        cover_item.get_content()
+    )
+
+    extension = detect_epub_cover_extension(
+        content
+    )
+
+    if extension is None:
+        return None
+
+    name_getter = getattr(
+        cover_item,
+        "get_name",
+        None,
+    )
+
+    if callable(name_getter):
+        item_name = str(name_getter())
+    else:
+        item_name = str(
+            getattr(
+                cover_item,
+                "file_name",
+                "cover",
+            )
+        )
+
+    filename = Path(item_name).name
+
+    if not filename.casefold().endswith(
+        (
+            ".jpg",
+            ".jpeg",
+            ".png",
+        )
+    ):
+        filename = f"cover{extension}"
+
+    return filename, content
+
+
+def find_epub_cover_item(
+    book: epub.EpubBook,
+) -> object | None:
+    """Find the most likely EPUB cover manifest item."""
+    candidates: list[object] = []
+    seen_ids: set[int] = set()
+
+    def add_candidate(
+        item: object | None,
+    ) -> None:
+        if item is None:
+            return
+
+        identity = id(item)
+
+        if identity in seen_ids:
+            return
+
+        candidates.append(item)
+        seen_ids.add(identity)
+
+    for item in book.get_items_of_type(
+        ebooklib.ITEM_COVER
+    ):
+        add_candidate(item)
+
+    for _, attributes in book.get_metadata(
+        "OPF",
+        "cover",
+    ):
+        cover_id = attributes.get("content")
+
+        if cover_id:
+            add_candidate(
+                book.get_item_with_id(
+                    cover_id
+                )
+            )
+
+    all_items = list(book.get_items())
+
+    for item in all_items:
+        properties = getattr(
+            item,
+            "properties",
+            [],
+        )
+
+        if isinstance(properties, str):
+            property_names = properties.split()
+        else:
+            property_names = list(
+                properties or []
+            )
+
+        if "cover-image" in property_names:
+            add_candidate(item)
+
+    for item in book.get_items_of_type(
+        ebooklib.ITEM_IMAGE
+    ):
+        name_getter = getattr(
+            item,
+            "get_name",
+            None,
+        )
+
+        if callable(name_getter):
+            item_name = str(
+                name_getter()
+            )
+        else:
+            item_name = str(
+                getattr(
+                    item,
+                    "file_name",
+                    "",
+                )
+            )
+
+        if "cover" in item_name.casefold():
+            add_candidate(item)
+
+    for candidate in candidates:
+        try:
+            content = bytes(
+                candidate.get_content()
+            )
+        except Exception:
+            continue
+
+        if (
+            detect_epub_cover_extension(
+                content
+            )
+            is not None
+        ):
+            return candidate
+
+    return None
+
+
+def detect_epub_cover_extension(
+    content: bytes,
+) -> str | None:
+    """Recognize cover formats supported by OpenBook AI."""
+    if content.startswith(
+        b"\x89PNG\r\n\x1a\n"
+    ):
+        return ".png"
+
+    if content.startswith(
+        b"\xff\xd8\xff"
+    ):
+        return ".jpg"
+
+    return None
+
+
 def normalize_text(text: str) -> str:
     """Normalize whitespace while retaining paragraphs."""
     text = text.replace("\r\n", "\n").replace("\r", "\n")
