@@ -28,8 +28,11 @@ from app.export_service import (
 from app.m4b_service import (
     create_m4b_export as build_m4b_export,
     delete_m4b_export,
+    get_chapter_markers,
+    get_job_timings,
     get_m4b_export_info,
     require_m4b_export,
+    validate_timings,
 )
 from app.models import AudiobookJob, Book
 from app.schemas import AudiobookCreateRequest
@@ -314,6 +317,55 @@ def generate_m4b_export(
         job,
         book.filename,
     )
+
+
+
+@router.get("/audiobook-jobs/{job_id}/chapters")
+def list_audiobook_chapters(
+    job_id: int,
+    session: DatabaseSession,
+) -> list[dict[str, object]]:
+    """Return playable chapter markers for an audiobook."""
+    job, _ = get_job_and_book(
+        session,
+        job_id,
+    )
+
+    if job.status != "completed":
+        return []
+
+    if job.id is None:
+        raise HTTPException(
+            status_code=500,
+            detail="The audiobook job has no database ID.",
+        )
+
+    timings = get_job_timings(job.id)
+
+    if not timings:
+        return []
+
+    try:
+        validate_timings(timings)
+
+        markers = get_chapter_markers(
+            job,
+            timings,
+        )
+    except ExportError as error:
+        raise HTTPException(
+            status_code=422,
+            detail=str(error),
+        ) from error
+
+    return [
+        {
+            "title": marker.title,
+            "start_ms": marker.start_ms,
+            "end_ms": marker.end_ms,
+        }
+        for marker in markers
+    ]
 
 
 @router.get("/audiobook-jobs/{job_id}/audio/m4b")

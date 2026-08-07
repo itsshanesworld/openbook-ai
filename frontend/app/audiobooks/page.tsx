@@ -6,6 +6,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -26,6 +27,12 @@ interface M4bExport {
   available: boolean;
   filename: string | null;
   size_bytes: number | null;
+}
+
+interface AudiobookChapter {
+  title: string;
+  start_ms: number;
+  end_ms: number;
 }
 
 interface AudiobookJob {
@@ -619,12 +626,7 @@ export default function AudiobooksPage() {
                           </button>
                         ) : (
                           <>
-                            <audio
-                              className="mt-4 w-full"
-                              controls
-                              preload="metadata"
-                              src={`${API_URL}/audiobook-jobs/${job.id}/audio/m4b`}
-                            />
+                            <M4bPlayer jobId={job.id} />
 
                             <div className="mt-4 flex flex-wrap items-center gap-4">
                               <a
@@ -682,6 +684,117 @@ export default function AudiobooksPage() {
   );
 }
 
+function M4bPlayer({
+  jobId,
+}: {
+  jobId: number;
+}) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [chapters, setChapters] = useState<AudiobookChapter[]>(
+    [],
+  );
+  const [chapterError, setChapterError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadChapters(): Promise<void> {
+      try {
+        const loadedChapters =
+          await requestJson<AudiobookChapter[]>(
+            `${API_URL}/audiobook-jobs/${jobId}/chapters`,
+          );
+
+        if (!cancelled) {
+          setChapters(loadedChapters);
+          setChapterError("");
+        }
+      } catch (caughtError) {
+        if (!cancelled) {
+          setChapterError(
+            caughtError instanceof Error
+              ? caughtError.message
+              : "Chapter navigation could not be loaded.",
+          );
+        }
+      }
+    }
+
+    void loadChapters();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [jobId]);
+
+  function jumpToChapter(
+    chapter: AudiobookChapter,
+  ): void {
+    const audio = audioRef.current;
+
+    if (!audio) {
+      return;
+    }
+
+    audio.currentTime = chapter.start_ms / 1000;
+
+    void audio.play().catch(() => undefined);
+  }
+
+  return (
+    <>
+      <audio
+        className="mt-4 w-full"
+        controls
+        preload="metadata"
+        ref={audioRef}
+        src={`${API_URL}/audiobook-jobs/${jobId}/audio/m4b`}
+      />
+
+      {chapterError && (
+        <p className="mt-3 text-sm text-amber-300">
+          Chapter navigation unavailable: {chapterError}
+        </p>
+      )}
+
+      {chapters.length > 0 && (
+        <div className="mt-5">
+          <h5 className="text-sm font-semibold text-slate-200">
+            Chapters
+          </h5>
+
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {chapters.map((chapter, index) => (
+              <button
+                aria-label={`Play ${chapter.title}`}
+                className="flex items-center justify-between gap-4 rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 text-left transition hover:border-cyan-400 hover:bg-slate-900"
+                key={`${chapter.title}-${chapter.start_ms}`}
+                onClick={() => jumpToChapter(chapter)}
+                type="button"
+              >
+                <span className="min-w-0">
+                  <span className="mr-2 text-xs text-slate-500">
+                    {index + 1}.
+                  </span>
+
+                  <span className="font-semibold text-cyan-200">
+                    {chapter.title}
+                  </span>
+                </span>
+
+                <span className="shrink-0 text-sm text-slate-400">
+                  {formatTimestamp(chapter.start_ms)}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+
 function StatusBadge({
   status,
 }: {
@@ -723,6 +836,33 @@ function Message({
     </div>
   );
 }
+
+function formatTimestamp(
+  milliseconds: number,
+): string {
+  const totalSeconds = Math.floor(
+    milliseconds / 1000,
+  );
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor(
+    (totalSeconds % 3600) / 60,
+  );
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return [
+      hours,
+      minutes.toString().padStart(2, "0"),
+      seconds.toString().padStart(2, "0"),
+    ].join(":");
+  }
+
+  return [
+    minutes,
+    seconds.toString().padStart(2, "0"),
+  ].join(":");
+}
+
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) {
