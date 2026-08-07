@@ -20,6 +20,7 @@ from app.export_service import (
 from app.models import (
     AudiobookJob,
     AudiobookSectionTiming,
+    Book,
     Chapter,
     NarrationSection,
 )
@@ -104,7 +105,10 @@ def create_m4b_export(
         try:
             metadata_path.write_text(
                 build_chapter_metadata(
-                    book_filename,
+                    get_audiobook_title(
+                        job,
+                        book_filename,
+                    ),
                     markers,
                 ),
                 encoding="utf-8",
@@ -448,13 +452,104 @@ def validate_timings(
         previous_start = timing.start_ms
 
 
-def build_chapter_metadata(
+def get_audiobook_title(
+    job: AudiobookJob,
     book_filename: str,
+) -> str:
+    """Return a detected book title with a filename fallback."""
+    fallback_title = (
+        Path(book_filename).stem
+        or "OpenBook AI Audiobook"
+    )
+
+    with Session(engine) as session:
+        book = session.get(
+            Book,
+            job.book_id,
+        )
+
+    if book is None:
+        return fallback_title
+
+    return detect_title_from_text(
+        book.extracted_text,
+        fallback_title,
+    )
+
+
+def detect_title_from_text(
+    text: str,
+    fallback_title: str,
+) -> str:
+    """Detect a plausible title near the start of book text."""
+    ignored_starts = (
+        "chapter ",
+        "part ",
+        "section ",
+        "book ",
+        "introduction",
+        "prologue",
+        "preface",
+        "foreword",
+        "epilogue",
+        "afterword",
+        "contents",
+        "table of contents",
+        "copyright",
+        "by ",
+    )
+
+    candidates = [
+        " ".join(line.split())
+        for line in text.splitlines()
+        if line.strip()
+    ]
+
+    for candidate in candidates[:12]:
+        normalized = candidate.casefold()
+
+        if not candidate:
+            continue
+
+        if len(candidate) > 120:
+            continue
+
+        if len(candidate.split()) > 18:
+            continue
+
+        if normalized.startswith(ignored_starts):
+            continue
+
+        if "http://" in normalized:
+            continue
+
+        if "https://" in normalized:
+            continue
+
+        if "@" in candidate:
+            continue
+
+        if "©" in candidate:
+            continue
+
+        if not any(
+            character.isalpha()
+            for character in candidate
+        ):
+            continue
+
+        return candidate
+
+    return fallback_title
+
+
+def build_chapter_metadata(
+    book_title: str,
     markers: list[ChapterMarker],
 ) -> str:
     """Build FFmpeg chapter metadata."""
     title = (
-        Path(book_filename).stem
+        book_title.strip()
         or "OpenBook AI Audiobook"
     )
 
