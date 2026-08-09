@@ -91,6 +91,31 @@ def extract_pdf(path: Path) -> str:
         )
 
 
+def extract_pdf_cover(
+    path: Path,
+) -> tuple[str, bytes] | None:
+    """Render the first PDF page as PNG cover artwork."""
+    with pymupdf.open(path) as document:
+        if document.page_count < 1:
+            return None
+
+        page = document[0]
+
+        pixmap = page.get_pixmap(
+            dpi=144,
+            alpha=False,
+        )
+
+        content = pixmap.tobytes("png")
+
+    if not content.startswith(
+        b"\x89PNG\r\n\x1a\n"
+    ):
+        return None
+
+    return "cover.png", content
+
+
 def extract_docx(path: Path) -> str:
     """Read paragraphs and tables from a DOCX file."""
     document = Document(path)

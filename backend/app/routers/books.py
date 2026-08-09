@@ -30,6 +30,7 @@ from app.document_processing import (
     ALLOWED_EXTENSIONS,
     detect_chapters,
     extract_epub_cover,
+    extract_pdf_cover,
     extract_text,
     normalize_text,
     save_upload,
@@ -132,25 +133,31 @@ async def upload_book(
 
         book_id = require_book_id(book)
 
+        extracted_cover: tuple[str, bytes] | None = None
+
         if extension == ".epub":
             extracted_cover = extract_epub_cover(
                 temporary_path
             )
+        elif extension == ".pdf":
+            extracted_cover = extract_pdf_cover(
+                temporary_path
+            )
 
-            if extracted_cover is not None:
-                (
+        if extracted_cover is not None:
+            (
+                cover_filename,
+                cover_content,
+            ) = extracted_cover
+
+            try:
+                save_cover(
+                    book_id,
                     cover_filename,
                     cover_content,
-                ) = extracted_cover
-
-                try:
-                    save_cover(
-                        book_id,
-                        cover_filename,
-                        cover_content,
-                    )
-                except CoverError:
-                    pass
+                )
+            except CoverError:
+                pass
 
         chapters = [
             Chapter(
