@@ -37,6 +37,8 @@ interface BookMetadata {
 }
 
 interface BookSummary {
+  display_title: string;
+  display_author: string | null;
   id: number;
   filename: string;
   file_type: string;
@@ -1109,8 +1111,18 @@ export default function Home() {
                       type="button"
                     >
                       <h3 className="break-words font-semibold">
-                        {book.filename}
+                        {book.display_title}
                       </h3>
+
+                      {book.display_author && (
+                        <p className="mt-1 break-words text-sm text-slate-300">
+                          {book.display_author}
+                        </p>
+                      )}
+
+                      <p className="mt-2 break-all text-xs text-slate-500">
+                        {book.filename}
+                      </p>
 
                       <p className="mt-2 text-xs text-slate-400">
                         {book.word_count.toLocaleString()}{" "}

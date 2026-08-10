@@ -76,6 +76,7 @@ def list_books(
         serialize_book_summary(
             book,
             count_chapters(session, require_book_id(book)),
+            session,
         )
         for book in books
     ]
@@ -877,20 +878,54 @@ def renumber_sections(
 def serialize_book_summary(
     book: Book,
     chapter_count: int,
+    session: Session,
 ) -> dict[str, object]:
     """Convert a book into a frontend-safe summary."""
+    book_id = require_book_id(book)
+
+    metadata = serialize_book_metadata(
+        get_book_metadata(
+            session,
+            book_id,
+        )
+    )
+
+    metadata_title = metadata.get("title")
+    metadata_author = metadata.get("author")
+
+    display_title = (
+        metadata_title.strip()
+        if (
+            isinstance(metadata_title, str)
+            and metadata_title.strip()
+        )
+        else (
+            Path(book.filename).stem
+            or book.filename
+        )
+    )
+
+    display_author = (
+        metadata_author.strip()
+        if (
+            isinstance(metadata_author, str)
+            and metadata_author.strip()
+        )
+        else None
+    )
+
     return {
-        "id": require_book_id(book),
+        "id": book_id,
         "filename": book.filename,
+        "display_title": display_title,
+        "display_author": display_author,
         "file_type": book.file_type,
         "size_bytes": book.size_bytes,
         "character_count": book.character_count,
         "word_count": book.word_count,
         "estimated_minutes": book.estimated_minutes,
         "chapter_count": chapter_count,
-        "cover": get_cover_info(
-            require_book_id(book)
-        ),
+        "cover": get_cover_info(book_id),
         "created_at": book.created_at,
     }
 
@@ -901,7 +936,11 @@ def serialize_book_detail(
     session: Session,
 ) -> dict[str, object]:
     """Convert a book and chapters into a detailed response."""
-    response = serialize_book_summary(book, len(chapters))
+    response = serialize_book_summary(
+        book,
+        len(chapters),
+        session,
+    )
 
     response.update(
         {
