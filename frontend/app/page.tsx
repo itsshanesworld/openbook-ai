@@ -26,6 +26,16 @@ interface CoverInfo {
   media_type: string | null;
 }
 
+interface BookMetadata {
+  title: string | null;
+  author: string | null;
+  automatic_title: string | null;
+  automatic_author: string | null;
+  manual_title: string | null;
+  manual_author: string | null;
+  source: string | null;
+}
+
 interface BookSummary {
   id: number;
   filename: string;
@@ -40,6 +50,7 @@ interface BookSummary {
 }
 
 interface BookDetail extends BookSummary {
+  metadata: BookMetadata;
   preview: string;
   chapters: Chapter[];
 }
@@ -180,6 +191,12 @@ export default function Home() {
     useState(false);
   const [coverVersion, setCoverVersion] =
     useState(0);
+  const [metadataTitle, setMetadataTitle] =
+    useState("");
+  const [metadataAuthor, setMetadataAuthor] =
+    useState("");
+  const [savingMetadata, setSavingMetadata] =
+    useState(false);
   const [targetWords, setTargetWords] = useState(350);
   const [previewSpeed, setPreviewSpeed] = useState(1);
   const [audioUrl, setAudioUrl] =
@@ -227,6 +244,15 @@ export default function Home() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    setMetadataTitle(
+      selectedBook?.metadata.manual_title ?? "",
+    );
+    setMetadataAuthor(
+      selectedBook?.metadata.manual_author ?? "",
+    );
+  }, [selectedBook]);
 
   const loadBooks = useCallback(async (): Promise<void> => {
     const storedBooks = await requestJson<BookSummary[]>(
@@ -354,6 +380,43 @@ export default function Home() {
       showError(uploadError, "The upload failed.");
     } finally {
       setUploading(false);
+    }
+  }
+
+  async function saveBookMetadata(): Promise<void> {
+    if (!selectedBook) {
+      return;
+    }
+
+    setSavingMetadata(true);
+    clearMessages();
+
+    try {
+      const savedBook = await requestJson<BookDetail>(
+        `${API_URL}/books/${selectedBook.id}/metadata`,
+        {
+          method: "PATCH",
+          headers: jsonHeaders(),
+          body: JSON.stringify({
+            title: metadataTitle,
+            author: metadataAuthor,
+          }),
+        },
+      );
+
+      setSelectedBook(savedBook);
+      await loadBooks();
+
+      setSuccessMessage(
+        "Book title and author were saved.",
+      );
+    } catch (metadataError) {
+      showError(
+        metadataError,
+        "The book metadata could not be saved.",
+      );
+    } finally {
+      setSavingMetadata(false);
     }
   }
 
@@ -1184,6 +1247,101 @@ export default function Home() {
                       ? "Unsaved changes"
                       : "Saved"}
                   </span>
+                </div>
+
+                <div className="mt-6 rounded-2xl border border-slate-700 bg-slate-950 p-5">
+                  <h3 className="text-lg font-bold">
+                    Book metadata
+                  </h3>
+
+                  <p className="mt-2 text-sm leading-6 text-slate-400">
+                    Saved values override automatic title and author
+                    detection in future M4B exports. Clear both fields
+                    and save to return to automatic detection.
+                  </p>
+
+                  <div className="mt-5 grid gap-4 md:grid-cols-2">
+                    <div>
+                      <label
+                        className="text-sm font-semibold"
+                        htmlFor="book-title"
+                      >
+                        Title
+                      </label>
+
+                      <input
+                        className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 outline-none focus:border-cyan-500"
+                        id="book-title"
+                        maxLength={200}
+                        onChange={(event) =>
+                          setMetadataTitle(event.target.value)
+                        }
+                        placeholder={
+                          selectedBook?.metadata.automatic_title ??
+                          "Use automatic title detection"
+                        }
+                        type="text"
+                        value={metadataTitle}
+                      />
+
+                      <p className="mt-2 text-xs text-slate-500">
+                        Automatic:{" "}
+                        {selectedBook?.metadata.automatic_title ??
+                          "text detection"}
+                      </p>
+                    </div>
+
+                    <div>
+                      <label
+                        className="text-sm font-semibold"
+                        htmlFor="book-author"
+                      >
+                        Author
+                      </label>
+
+                      <input
+                        className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 outline-none focus:border-cyan-500"
+                        id="book-author"
+                        maxLength={200}
+                        onChange={(event) =>
+                          setMetadataAuthor(event.target.value)
+                        }
+                        placeholder={
+                          selectedBook?.metadata.automatic_author ??
+                          "Use automatic author detection"
+                        }
+                        type="text"
+                        value={metadataAuthor}
+                      />
+
+                      <p className="mt-2 text-xs text-slate-500">
+                        Automatic:{" "}
+                        {selectedBook?.metadata.automatic_author ??
+                          "text detection"}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 flex flex-wrap items-center gap-4">
+                    <button
+                      className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
+                      disabled={savingMetadata}
+                      onClick={() =>
+                        void saveBookMetadata()
+                      }
+                      type="button"
+                    >
+                      {savingMetadata
+                        ? "Saving..."
+                        : "Save metadata"}
+                    </button>
+
+                    <p className="text-xs text-slate-500">
+                      Source:{" "}
+                      {selectedBook?.metadata.source ??
+                        "automatic fallback"}
+                    </p>
+                  </div>
                 </div>
 
                 <div className="mt-6 rounded-2xl border border-slate-700 bg-slate-950 p-5">

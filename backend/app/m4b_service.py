@@ -526,12 +526,18 @@ def get_audiobook_title(
             )
         ).first()
 
-    if (
-        metadata is not None
-        and metadata.title is not None
-        and metadata.title.strip()
-    ):
-        return metadata.title.strip()
+    if metadata is not None:
+        if (
+            metadata.manual_title is not None
+            and metadata.manual_title.strip()
+        ):
+            return metadata.manual_title.strip()
+
+        if (
+            metadata.title is not None
+            and metadata.title.strip()
+        ):
+            return metadata.title.strip()
 
     if book is None:
         return fallback_title
@@ -626,12 +632,18 @@ def get_audiobook_author(
             )
         ).first()
 
-    if (
-        metadata is not None
-        and metadata.author is not None
-        and metadata.author.strip()
-    ):
-        return metadata.author.strip()
+    if metadata is not None:
+        if (
+            metadata.manual_author is not None
+            and metadata.manual_author.strip()
+        ):
+            return metadata.manual_author.strip()
+
+        if (
+            metadata.author is not None
+            and metadata.author.strip()
+        ):
+            return metadata.author.strip()
 
     if book is None:
         return None

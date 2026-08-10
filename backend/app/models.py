@@ -43,6 +43,8 @@ class BookMetadata(SQLModel, table=True):
 
     title: str | None = None
     author: str | None = None
+    manual_title: str | None = None
+    manual_author: str | None = None
     source: str = "epub"
 
     created_at: str = Field(

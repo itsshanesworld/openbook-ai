@@ -18,8 +18,37 @@ engine = create_engine(
 
 
 def create_database_tables() -> None:
-    """Create all database tables that do not already exist."""
+    """Create tables and apply lightweight SQLite schema upgrades."""
     SQLModel.metadata.create_all(engine)
+    ensure_book_metadata_override_columns()
+
+
+def ensure_book_metadata_override_columns() -> None:
+    """Add editable metadata override columns when upgrading."""
+    with engine.begin() as connection:
+        rows = connection.exec_driver_sql(
+            "PRAGMA table_info(bookmetadata)"
+        ).mappings().all()
+
+        if not rows:
+            return
+
+        column_names = {
+            str(row["name"])
+            for row in rows
+        }
+
+        if "manual_title" not in column_names:
+            connection.exec_driver_sql(
+                "ALTER TABLE bookmetadata "
+                "ADD COLUMN manual_title VARCHAR"
+            )
+
+        if "manual_author" not in column_names:
+            connection.exec_driver_sql(
+                "ALTER TABLE bookmetadata "
+                "ADD COLUMN manual_author VARCHAR"
+            )
 
 
 def get_session() -> Generator[Session, None, None]:

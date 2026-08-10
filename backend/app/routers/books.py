@@ -15,6 +15,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
 from app.cover_service import (
@@ -50,6 +51,19 @@ router = APIRouter()
 DatabaseSession = Annotated[Session, Depends(get_session)]
 
 
+class BookMetadataUpdate(BaseModel):
+    """Editable title and author metadata."""
+
+    title: str | None = Field(
+        default=None,
+        max_length=200,
+    )
+    author: str | None = Field(
+        default=None,
+        max_length=200,
+    )
+
+
 @router.get("/books")
 def list_books(
     session: DatabaseSession,
@@ -76,7 +90,11 @@ def get_book(
     book = get_existing_book(session, book_id)
     chapters = get_chapters(session, book_id)
 
-    return serialize_book_detail(book, chapters)
+    return serialize_book_detail(
+        book,
+        chapters,
+        session,
+    )
 
 
 @router.post("/books/upload", status_code=201)
@@ -213,7 +231,11 @@ async def upload_book(
         book_committed = True
         session.refresh(book)
 
-        return serialize_book_detail(book, chapters)
+        return serialize_book_detail(
+            book,
+            chapters,
+            session,
+        )
     except HTTPException:
         session.rollback()
 
@@ -241,6 +263,78 @@ async def upload_book(
 
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
+
+
+@router.patch("/books/{book_id}/metadata")
+def update_book_metadata(
+    book_id: int,
+    update: BookMetadataUpdate,
+    session: DatabaseSession,
+) -> dict[str, object]:
+    """Save editable title and author metadata."""
+    book = get_existing_book(
+        session,
+        book_id,
+    )
+
+    title = clean_book_metadata_value(
+        update.title
+    )
+    author = clean_book_metadata_value(
+        update.author
+    )
+
+    metadata = get_book_metadata(
+        session,
+        book_id,
+    )
+
+    if metadata is None and (
+        title is not None
+        or author is not None
+    ):
+        metadata = BookMetadata(
+            book_id=book_id,
+            source="manual",
+        )
+
+    if metadata is not None:
+        metadata.manual_title = title
+        metadata.manual_author = author
+        metadata.updated_at = utc_timestamp()
+
+        has_automatic_metadata = (
+            clean_book_metadata_value(
+                metadata.title
+            )
+            is not None
+            or clean_book_metadata_value(
+                metadata.author
+            )
+            is not None
+        )
+
+        has_manual_metadata = (
+            title is not None
+            or author is not None
+        )
+
+        if (
+            not has_automatic_metadata
+            and not has_manual_metadata
+        ):
+            session.delete(metadata)
+        else:
+            session.add(metadata)
+
+    session.commit()
+    session.refresh(book)
+
+    return serialize_book_detail(
+        book,
+        get_chapters(session, book_id),
+        session,
+    )
 
 
 @router.post(
@@ -629,6 +723,90 @@ def require_book_id(book: Book) -> int:
     return book.id
 
 
+def get_book_metadata(
+    session: Session,
+    book_id: int,
+) -> BookMetadata | None:
+    """Return stored metadata for one book."""
+    return session.exec(
+        select(BookMetadata)
+        .where(
+            BookMetadata.book_id == book_id
+        )
+    ).first()
+
+
+def clean_book_metadata_value(
+    value: str | None,
+) -> str | None:
+    """Normalize an editable metadata value."""
+    if value is None:
+        return None
+
+    cleaned = " ".join(
+        value.split()
+    ).strip()
+
+    return cleaned or None
+
+
+def serialize_book_metadata(
+    metadata: BookMetadata | None,
+) -> dict[str, object]:
+    """Convert stored book metadata for the frontend."""
+    if metadata is None:
+        return {
+            "title": None,
+            "author": None,
+            "automatic_title": None,
+            "automatic_author": None,
+            "manual_title": None,
+            "manual_author": None,
+            "source": None,
+        }
+
+    manual_title = clean_book_metadata_value(
+        metadata.manual_title
+    )
+    manual_author = clean_book_metadata_value(
+        metadata.manual_author
+    )
+
+    automatic_title = clean_book_metadata_value(
+        metadata.title
+    )
+    automatic_author = clean_book_metadata_value(
+        metadata.author
+    )
+
+    manual_override_active = (
+        manual_title is not None
+        or manual_author is not None
+    )
+
+    return {
+        "title": (
+            manual_title
+            if manual_title is not None
+            else automatic_title
+        ),
+        "author": (
+            manual_author
+            if manual_author is not None
+            else automatic_author
+        ),
+        "automatic_title": automatic_title,
+        "automatic_author": automatic_author,
+        "manual_title": manual_title,
+        "manual_author": manual_author,
+        "source": (
+            "manual"
+            if manual_override_active
+            else metadata.source
+        ),
+    }
+
+
 def get_chapters(
     session: Session,
     book_id: int,
@@ -720,12 +898,19 @@ def serialize_book_summary(
 def serialize_book_detail(
     book: Book,
     chapters: list[Chapter],
+    session: Session,
 ) -> dict[str, object]:
     """Convert a book and chapters into a detailed response."""
     response = serialize_book_summary(book, len(chapters))
 
     response.update(
         {
+            "metadata": serialize_book_metadata(
+                get_book_metadata(
+                    session,
+                    require_book_id(book),
+                )
+            ),
             "preview": book.extracted_text[:5000],
             "chapters": [
                 {
