@@ -35,12 +35,14 @@ from app.document_processing import (
     normalize_text,
     save_upload,
     split_into_narration_sections,
+    extract_epub_metadata,
 )
 from app.models import (
     Book,
     Chapter,
     NarrationSection,
     utc_timestamp,
+    BookMetadata,
 )
 from app.schemas import SectionMove, SectionSplit, SectionUpdate
 
@@ -132,6 +134,27 @@ async def upload_book(
         session.flush()
 
         book_id = require_book_id(book)
+
+        if extension == ".epub":
+            (
+                metadata_title,
+                metadata_author,
+            ) = extract_epub_metadata(
+                temporary_path
+            )
+
+            if (
+                metadata_title is not None
+                or metadata_author is not None
+            ):
+                session.add(
+                    BookMetadata(
+                        book_id=book_id,
+                        title=metadata_title,
+                        author=metadata_author,
+                        source="epub",
+                    )
+                )
 
         extracted_cover: tuple[str, bytes] | None = None
 
@@ -319,6 +342,16 @@ def delete_book(
         session.delete(section)
 
     delete_cover(book_id)
+
+    metadata = session.exec(
+        select(BookMetadata)
+        .where(
+            BookMetadata.book_id == book_id
+        )
+    ).first()
+
+    if metadata is not None:
+        session.delete(metadata)
 
     session.delete(book)
     session.commit()

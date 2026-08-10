@@ -27,6 +27,33 @@ class Book(SQLModel, table=True):
     created_at: str = Field(default_factory=utc_timestamp)
 
 
+class BookMetadata(SQLModel, table=True):
+    """Persistent metadata belonging to one source book."""
+
+    id: int | None = Field(
+        default=None,
+        primary_key=True,
+    )
+
+    book_id: int = Field(
+        foreign_key="book.id",
+        index=True,
+        unique=True,
+    )
+
+    title: str | None = None
+    author: str | None = None
+    source: str = "epub"
+
+    created_at: str = Field(
+        default_factory=utc_timestamp,
+    )
+
+    updated_at: str = Field(
+        default_factory=utc_timestamp,
+    )
+
+
 class Chapter(SQLModel, table=True):
     """Detected chapter heading."""
 

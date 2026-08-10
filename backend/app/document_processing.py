@@ -160,6 +160,86 @@ def extract_epub(path: Path) -> str:
     return "\n\n".join(sections)
 
 
+def extract_epub_metadata(
+    path: Path,
+) -> tuple[str | None, str | None]:
+    """Extract structured title and author metadata from EPUB."""
+    book = epub.read_epub(
+        str(path)
+    )
+
+    title = first_epub_metadata_value(
+        book.get_metadata(
+            "DC",
+            "title",
+        )
+    )
+
+    authors: list[str] = []
+    seen_authors: set[str] = set()
+
+    for value, _ in book.get_metadata(
+        "DC",
+        "creator",
+    ):
+        author = clean_epub_metadata_value(
+            value
+        )
+
+        if author is None:
+            continue
+
+        key = author.casefold()
+
+        if key in seen_authors:
+            continue
+
+        authors.append(author)
+        seen_authors.add(key)
+
+    author = (
+        ", ".join(authors)
+        if authors
+        else None
+    )
+
+    return title, author
+
+
+def first_epub_metadata_value(
+    values: list[tuple[object, dict[str, str]]],
+) -> str | None:
+    """Return the first usable EPUB metadata value."""
+    for value, _ in values:
+        cleaned = clean_epub_metadata_value(
+            value
+        )
+
+        if cleaned is not None:
+            return cleaned
+
+    return None
+
+
+def clean_epub_metadata_value(
+    value: object,
+) -> str | None:
+    """Normalize one EPUB metadata value."""
+    if value is None:
+        return None
+
+    cleaned = re.sub(
+        r"\s+",
+        " ",
+        str(value),
+    ).strip()
+
+    if not cleaned:
+        return None
+
+    return cleaned
+
+
 def extract_epub_cover(
     path: Path,
 ) -> tuple[str, bytes] | None:

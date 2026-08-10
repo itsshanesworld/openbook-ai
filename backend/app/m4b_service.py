@@ -26,6 +26,7 @@ from app.models import (
     Book,
     Chapter,
     NarrationSection,
+    BookMetadata,
 )
 
 M4B_BITRATE = "64k"
@@ -505,7 +506,7 @@ def get_audiobook_title(
     job: AudiobookJob,
     book_filename: str,
 ) -> str:
-    """Return a detected book title with a filename fallback."""
+    """Return stored metadata, detected text, or filename title."""
     fallback_title = (
         Path(book_filename).stem
         or "OpenBook AI Audiobook"
@@ -516,6 +517,21 @@ def get_audiobook_title(
             Book,
             job.book_id,
         )
+
+        metadata = session.exec(
+            select(BookMetadata)
+            .where(
+                BookMetadata.book_id
+                == job.book_id
+            )
+        ).first()
+
+    if (
+        metadata is not None
+        and metadata.title is not None
+        and metadata.title.strip()
+    ):
+        return metadata.title.strip()
 
     if book is None:
         return fallback_title
@@ -595,12 +611,27 @@ def detect_title_from_text(
 def get_audiobook_author(
     job: AudiobookJob,
 ) -> str | None:
-    """Return a detected author when the source includes one."""
+    """Return stored metadata or a detected author byline."""
     with Session(engine) as session:
         book = session.get(
             Book,
             job.book_id,
         )
+
+        metadata = session.exec(
+            select(BookMetadata)
+            .where(
+                BookMetadata.book_id
+                == job.book_id
+            )
+        ).first()
+
+    if (
+        metadata is not None
+        and metadata.author is not None
+        and metadata.author.strip()
+    ):
+        return metadata.author.strip()
 
     if book is None:
         return None
