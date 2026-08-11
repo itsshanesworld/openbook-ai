@@ -10,11 +10,21 @@ import {
   useState,
 } from "react";
 
+interface CoverInfo {
+  available: boolean;
+  filename: string | null;
+  size_bytes: number | null;
+  media_type: string | null;
+}
+
 interface BookSummary {
   id: number;
   filename: string;
+  display_title: string;
+  display_author: string | null;
   word_count: number;
   estimated_minutes: number;
+  cover: CoverInfo;
 }
 
 interface Mp3Export {
@@ -39,6 +49,9 @@ interface AudiobookJob {
   id: number;
   book_id: number;
   book_filename: string;
+  book_title: string;
+  book_author: string | null;
+  cover: CoverInfo;
   status: "queued" | "running" | "completed" | "failed";
   speed: number;
   total_sections: number;
@@ -393,21 +406,55 @@ export default function AudiobooksPage() {
                 >
                   {books.map((book) => (
                     <option key={book.id} value={book.id}>
-                      {book.filename}
+                      {book.display_title}
+                      {book.display_author
+                        ? ` — ${book.display_author}`
+                        : ""}
                     </option>
                   ))}
                 </select>
 
                 {selectedBook && (
-                  <div className="mt-5 rounded-xl bg-slate-950 p-4 text-sm">
-                    <p>
-                      {selectedBook.word_count.toLocaleString()} words
-                    </p>
+                  <div className="mt-5 flex gap-4 rounded-xl bg-slate-950 p-4">
+                    <div className="flex h-24 w-16 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-700 bg-slate-900">
+                      {selectedBook.cover.available ? (
+                        <img
+                          alt={`Cover for ${selectedBook.display_title}`}
+                          className="h-full w-full object-cover"
+                          src={`${API_URL}/books/${selectedBook.id}/cover`}
+                        />
+                      ) : (
+                        <span
+                          aria-hidden="true"
+                          className="text-2xl"
+                        >
+                          📚
+                        </span>
+                      )}
+                    </div>
 
-                    <p className="mt-2 text-slate-400">
-                      Approximately{" "}
-                      {selectedBook.estimated_minutes} minutes
-                    </p>
+                    <div className="min-w-0 text-sm">
+                      <p className="break-words font-semibold text-white">
+                        {selectedBook.display_title}
+                      </p>
+
+                      {selectedBook.display_author && (
+                        <p className="mt-1 break-words text-slate-300">
+                          {selectedBook.display_author}
+                        </p>
+                      )}
+
+                      <p className="mt-2 break-all text-xs text-slate-500">
+                        {selectedBook.filename}
+                      </p>
+
+                      <p className="mt-2 text-slate-400">
+                        {selectedBook.word_count.toLocaleString()} words
+                        {" · "}
+                        approximately{" "}
+                        {selectedBook.estimated_minutes} minutes
+                      </p>
+                    </div>
                   </div>
                 )}
 
@@ -483,16 +530,45 @@ export default function AudiobooksPage() {
                   key={job.id}
                 >
                   <div className="flex flex-wrap justify-between gap-4">
-                    <div>
-                      <h3 className="break-words font-semibold">
-                        {job.book_filename}
-                      </h3>
+                    <div className="flex min-w-0 gap-4">
+                      <div className="flex h-28 w-20 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-700 bg-slate-900">
+                        {job.cover.available ? (
+                          <img
+                            alt={`Cover for ${job.book_title}`}
+                            className="h-full w-full object-cover"
+                            src={`${API_URL}/books/${job.book_id}/cover`}
+                          />
+                        ) : (
+                          <span
+                            aria-hidden="true"
+                            className="text-3xl"
+                          >
+                            📚
+                          </span>
+                        )}
+                      </div>
 
-                      <p className="mt-2 text-sm text-slate-400">
-                        {job.completed_sections} of{" "}
-                        {job.total_sections} sections ·{" "}
-                        {job.speed.toFixed(2)}×
-                      </p>
+                      <div className="min-w-0">
+                        <h3 className="break-words text-lg font-semibold">
+                          {job.book_title}
+                        </h3>
+
+                        {job.book_author && (
+                          <p className="mt-1 break-words text-sm text-slate-300">
+                            {job.book_author}
+                          </p>
+                        )}
+
+                        <p className="mt-2 break-all text-xs text-slate-500">
+                          {job.book_filename}
+                        </p>
+
+                        <p className="mt-3 text-sm text-slate-400">
+                          {job.completed_sections} of{" "}
+                          {job.total_sections} sections ·{" "}
+                          {job.speed.toFixed(2)}×
+                        </p>
+                      </div>
                     </div>
 
                     <StatusBadge status={job.status} />

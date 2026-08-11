@@ -17,6 +17,7 @@ from app.audiobook_service import (
     get_book_sections,
     run_audiobook_job,
 )
+from app.cover_service import get_cover_info
 from app.database import get_session
 from app.export_service import (
     ExportError,
@@ -28,13 +29,15 @@ from app.export_service import (
 from app.m4b_service import (
     create_m4b_export as build_m4b_export,
     delete_m4b_export,
+    detect_author_from_text,
+    detect_title_from_text,
     get_chapter_markers,
     get_job_timings,
     get_m4b_export_info,
     require_m4b_export,
     validate_timings,
 )
-from app.models import AudiobookJob, Book
+from app.models import AudiobookJob, Book, BookMetadata
 from app.schemas import AudiobookCreateRequest
 from app.tts_service import get_tts_status
 
@@ -164,10 +167,7 @@ def get_audiobook_job(
         job_id,
     )
 
-    return serialize_job(
-        job,
-        book.filename,
-    )
+    return serialize_job(job, book, session)
 
 
 @router.get("/audiobook-jobs/{job_id}/audio")
@@ -234,10 +234,7 @@ def generate_mp3_export(
             detail=str(error),
         ) from error
 
-    return serialize_job(
-        job,
-        book.filename,
-    )
+    return serialize_job(job, book, session)
 
 
 @router.get("/audiobook-jobs/{job_id}/audio/mp3")
@@ -313,10 +310,7 @@ def generate_m4b_export(
             detail=str(error),
         ) from error
 
-    return serialize_job(
-        job,
-        book.filename,
-    )
+    return serialize_job(job, book, session)
 
 
 
@@ -523,9 +517,73 @@ def require_completed_wav(
     return output_path
 
 
+def resolve_job_book_metadata(
+    book: Book,
+    book_id: int,
+    session: Session,
+) -> tuple[str, str | None]:
+    """Resolve effective title and author for an audiobook job."""
+    metadata = session.exec(
+        select(BookMetadata)
+        .where(
+            BookMetadata.book_id == book_id
+        )
+    ).first()
+
+    fallback_title = (
+        Path(book.filename).stem
+        or book.filename
+        or "OpenBook AI Audiobook"
+    )
+
+    title: str | None = None
+    author: str | None = None
+
+    if metadata is not None:
+        title = first_nonempty_value(
+            metadata.manual_title,
+            metadata.title,
+        )
+
+        author = first_nonempty_value(
+            metadata.manual_author,
+            metadata.author,
+        )
+
+    if title is None:
+        title = detect_title_from_text(
+            book.extracted_text,
+            fallback_title,
+        )
+
+    if author is None:
+        author = detect_author_from_text(
+            book.extracted_text
+        )
+
+    return title, author
+
+
+def first_nonempty_value(
+    *values: str | None,
+) -> str | None:
+    """Return the first non-empty text value."""
+    for value in values:
+        if value is None:
+            continue
+
+        cleaned = value.strip()
+
+        if cleaned:
+            return cleaned
+
+    return None
+
+
 def serialize_job(
     job: AudiobookJob,
-    book_filename: str,
+    book: Book,
+    session: Session,
 ) -> dict[str, object]:
     """Convert an audiobook job into frontend data."""
     progress_percent = (
@@ -538,10 +596,22 @@ def serialize_job(
         else 0
     )
 
+    (
+        book_title,
+        book_author,
+    ) = resolve_job_book_metadata(
+        book,
+        job.book_id,
+        session,
+    )
+
     return {
         "id": job.id,
         "book_id": job.book_id,
-        "book_filename": book_filename,
+        "book_filename": book.filename,
+        "book_title": book_title,
+        "book_author": book_author,
+        "cover": get_cover_info(job.book_id),
         "status": job.status,
         "speed": job.speed,
         "total_sections": job.total_sections,
