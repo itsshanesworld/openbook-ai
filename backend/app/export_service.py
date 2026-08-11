@@ -35,13 +35,20 @@ def get_ffmpeg_status() -> dict[str, object]:
 def create_mp3_export(
     job: AudiobookJob,
     book_filename: str,
+    *,
+    title: str | None = None,
+    author: str | None = None,
+    cover_path: Path | None = None,
 ) -> Path:
-    """Convert a completed WAV audiobook into MP3."""
+    """Convert a completed WAV audiobook into a tagged MP3."""
     with _export_lock:
         source_path = require_completed_wav(job)
         output_path = get_mp3_export_path(job)
 
-        if output_path.is_file() and output_path.stat().st_size > 0:
+        if (
+            output_path.is_file()
+            and output_path.stat().st_size > 0
+        ):
             return output_path
 
         executable = shutil.which("ffmpeg")
@@ -56,9 +63,37 @@ def create_mp3_export(
         temporary_path = output_path.with_name(
             f".{output_path.stem}.temporary.mp3"
         )
-        temporary_path.unlink(missing_ok=True)
 
-        title = Path(book_filename).stem or "OpenBook AI Audiobook"
+        temporary_path.unlink(
+            missing_ok=True,
+        )
+
+        fallback_title = (
+            Path(book_filename).stem
+            or "OpenBook AI Audiobook"
+        )
+
+        resolved_title = (
+            title.strip()
+            if title is not None and title.strip()
+            else fallback_title
+        )
+
+        resolved_author = (
+            author.strip()
+            if author is not None and author.strip()
+            else None
+        )
+
+        valid_cover_path = (
+            cover_path
+            if (
+                cover_path is not None
+                and cover_path.is_file()
+                and cover_path.stat().st_size > 0
+            )
+            else None
+        )
 
         command = [
             executable,
@@ -69,25 +104,86 @@ def create_mp3_export(
             "error",
             "-i",
             str(source_path),
-            "-map",
-            "0:a:0",
-            "-vn",
-            "-ac",
-            "1",
-            "-codec:a",
-            "libmp3lame",
-            "-b:a",
-            MP3_BITRATE,
-            "-id3v2_version",
-            "3",
-            "-metadata",
-            f"title={title}",
-            "-metadata",
-            "artist=OpenBook AI",
-            "-f",
-            "mp3",
-            str(temporary_path),
         ]
+
+        if valid_cover_path is not None:
+            command.extend(
+                [
+                    "-i",
+                    str(valid_cover_path),
+                ]
+            )
+
+        command.extend(
+            [
+                "-map",
+                "0:a:0",
+            ]
+        )
+
+        if valid_cover_path is not None:
+            command.extend(
+                [
+                    "-map",
+                    "1:v:0",
+                ]
+            )
+
+        command.extend(
+            [
+                "-ac",
+                "1",
+                "-codec:a",
+                "libmp3lame",
+                "-b:a",
+                MP3_BITRATE,
+            ]
+        )
+
+        if valid_cover_path is not None:
+            command.extend(
+                [
+                    "-codec:v",
+                    "copy",
+                    "-disposition:v:0",
+                    "attached_pic",
+                    "-metadata:s:v",
+                    "title=Album cover",
+                    "-metadata:s:v",
+                    "comment=Cover (front)",
+                ]
+            )
+
+        command.extend(
+            [
+                "-id3v2_version",
+                "3",
+                "-metadata",
+                f"title={resolved_title}",
+                "-metadata",
+                f"album={resolved_title}",
+                "-metadata",
+                "encoded_by=OpenBook AI",
+            ]
+        )
+
+        if resolved_author is not None:
+            command.extend(
+                [
+                    "-metadata",
+                    f"artist={resolved_author}",
+                    "-metadata",
+                    f"album_artist={resolved_author}",
+                ]
+            )
+
+        command.extend(
+            [
+                "-f",
+                "mp3",
+                str(temporary_path),
+            ]
+        )
 
         try:
             completed_process = subprocess.run(
@@ -98,10 +194,13 @@ def create_mp3_export(
             )
 
             if completed_process.returncode != 0:
-                message = completed_process.stderr.strip()
+                message = (
+                    completed_process.stderr.strip()
+                )
 
                 raise ExportError(
-                    message or "FFmpeg could not create the MP3."
+                    message
+                    or "FFmpeg could not create the MP3."
                 )
 
             if (
@@ -112,11 +211,15 @@ def create_mp3_export(
                     "FFmpeg produced an empty MP3 file."
                 )
 
-            temporary_path.replace(output_path)
+            temporary_path.replace(
+                output_path
+            )
+
             return output_path
         finally:
-            temporary_path.unlink(missing_ok=True)
-
+            temporary_path.unlink(
+                missing_ok=True,
+            )
 
 def get_mp3_export_path(job: AudiobookJob) -> Path:
     """Return the MP3 path associated with an audiobook job."""

@@ -17,7 +17,7 @@ from app.audiobook_service import (
     get_book_sections,
     run_audiobook_job,
 )
-from app.cover_service import get_cover_info
+from app.cover_service import get_cover_info, get_cover_path
 from app.database import get_session
 from app.export_service import (
     ExportError,
@@ -224,9 +224,23 @@ def generate_mp3_export(
     )
 
     try:
+        (
+            book_title,
+            book_author,
+        ) = resolve_job_book_metadata(
+            book,
+            job.book_id,
+            session,
+        )
+
         build_mp3_export(
             job,
             book.filename,
+            title=book_title,
+            author=book_author,
+            cover_path=get_cover_path(
+                job.book_id
+            ),
         )
     except ExportError as error:
         raise HTTPException(
