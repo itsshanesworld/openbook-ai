@@ -37,6 +37,8 @@ from app.document_processing import (
     save_upload,
     split_into_narration_sections,
     extract_epub_metadata,
+    extract_pdf_metadata,
+    extract_docx_metadata,
 )
 from app.models import (
     Book,
@@ -154,6 +156,10 @@ async def upload_book(
 
         book_id = require_book_id(book)
 
+        metadata_title: str | None = None
+        metadata_author: str | None = None
+        metadata_source: str | None = None
+
         if extension == ".epub":
             (
                 metadata_title,
@@ -161,19 +167,39 @@ async def upload_book(
             ) = extract_epub_metadata(
                 temporary_path
             )
+            metadata_source = "epub"
+        elif extension == ".pdf":
+            (
+                metadata_title,
+                metadata_author,
+            ) = extract_pdf_metadata(
+                temporary_path
+            )
+            metadata_source = "pdf"
+        elif extension == ".docx":
+            (
+                metadata_title,
+                metadata_author,
+            ) = extract_docx_metadata(
+                temporary_path
+            )
+            metadata_source = "docx"
 
-            if (
+        if (
+            metadata_source is not None
+            and (
                 metadata_title is not None
                 or metadata_author is not None
-            ):
-                session.add(
-                    BookMetadata(
-                        book_id=book_id,
-                        title=metadata_title,
-                        author=metadata_author,
-                        source="epub",
-                    )
+            )
+        ):
+            session.add(
+                BookMetadata(
+                    book_id=book_id,
+                    title=metadata_title,
+                    author=metadata_author,
+                    source=metadata_source,
                 )
+            )
 
         extracted_cover: tuple[str, bytes] | None = None
 

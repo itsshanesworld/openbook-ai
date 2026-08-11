@@ -91,6 +91,24 @@ def extract_pdf(path: Path) -> str:
         )
 
 
+def extract_pdf_metadata(
+    path: Path,
+) -> tuple[str | None, str | None]:
+    """Extract structured title and author metadata from PDF."""
+    with pymupdf.open(path) as document:
+        metadata = document.metadata or {}
+
+    title = clean_document_metadata_value(
+        metadata.get("title")
+    )
+
+    author = clean_document_metadata_value(
+        metadata.get("author")
+    )
+
+    return title, author
+
+
 def extract_pdf_cover(
     path: Path,
 ) -> tuple[str, bytes] | None:
@@ -141,6 +159,24 @@ def extract_docx(path: Path) -> str:
     return "\n\n".join(sections)
 
 
+def extract_docx_metadata(
+    path: Path,
+) -> tuple[str | None, str | None]:
+    """Extract structured title and author metadata from DOCX."""
+    document = Document(path)
+    properties = document.core_properties
+
+    title = clean_document_metadata_value(
+        properties.title
+    )
+
+    author = clean_document_metadata_value(
+        properties.author
+    )
+
+    return title, author
+
+
 def extract_epub(path: Path) -> str:
     """Read text from EPUB document sections."""
     book = epub.read_epub(str(path))
@@ -182,7 +218,7 @@ def extract_epub_metadata(
         "DC",
         "creator",
     ):
-        author = clean_epub_metadata_value(
+        author = clean_document_metadata_value(
             value
         )
 
@@ -211,7 +247,7 @@ def first_epub_metadata_value(
 ) -> str | None:
     """Return the first usable EPUB metadata value."""
     for value, _ in values:
-        cleaned = clean_epub_metadata_value(
+        cleaned = clean_document_metadata_value(
             value
         )
 
@@ -221,10 +257,10 @@ def first_epub_metadata_value(
     return None
 
 
-def clean_epub_metadata_value(
+def clean_document_metadata_value(
     value: object,
 ) -> str | None:
-    """Normalize one EPUB metadata value."""
+    """Normalize one structured document metadata value."""
     if value is None:
         return None
 
