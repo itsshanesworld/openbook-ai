@@ -87,3 +87,28 @@ class AudiobookCreateRequest(BaseModel):
         ge=0.75,
         le=1.5,
     )
+
+    voice: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=120,
+    )
+
+    @field_validator("voice")
+    @classmethod
+    def normalize_voice(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        """Normalize an optional Piper voice identifier."""
+        if value is None:
+            return None
+
+        cleaned = value.strip()
+
+        if not cleaned:
+            raise ValueError(
+                "Narrator voice cannot be blank."
+            )
+
+        return cleaned

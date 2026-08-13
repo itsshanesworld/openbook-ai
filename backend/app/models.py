@@ -86,6 +86,7 @@ class AudiobookJob(SQLModel, table=True):
     book_id: int = Field(foreign_key="book.id", index=True)
     status: str = Field(default="queued", index=True)
     speed: float = 1.0
+    voice: str | None = None
     total_sections: int
     completed_sections: int = 0
     output_filename: str | None = None

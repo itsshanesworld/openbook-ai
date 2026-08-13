@@ -111,6 +111,7 @@ def run_audiobook_job(job_id: int) -> None:
                         completed_sections=completed,
                     )
                 ),
+                voice_name=job.voice,
             )
 
             job.status = "completed"
@@ -155,6 +156,7 @@ def generate_combined_wav(
     speed: float,
     output_path: Path,
     timing_callback: TimingCallback,
+    voice_name: str | None = None,
 ) -> None:
     """Generate one WAV and record section timestamps."""
     temporary_path = get_temporary_output_path(
@@ -176,6 +178,7 @@ def generate_combined_wav(
             audio_bytes = synthesize_wav(
                 section.text,
                 speed,
+                voice_name=voice_name,
             )
 
             with wave.open(

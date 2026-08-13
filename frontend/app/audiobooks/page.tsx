@@ -17,6 +17,16 @@ interface CoverInfo {
   media_type: string | null;
 }
 
+interface VoiceOption {
+  id: string;
+  name: string;
+}
+
+interface VoiceListResponse {
+  default_voice: string;
+  voices: VoiceOption[];
+}
+
 interface BookSummary {
   id: number;
   filename: string;
@@ -54,6 +64,7 @@ interface AudiobookJob {
   cover: CoverInfo;
   status: "queued" | "running" | "completed" | "failed";
   speed: number;
+  voice: string;
   total_sections: number;
   completed_sections: number;
   progress_percent: number;
@@ -113,6 +124,8 @@ export default function AudiobooksPage() {
   const [bookId, setBookId] = useState<number | null>(null);
   const [jobs, setJobs] = useState<AudiobookJob[]>([]);
   const [speed, setSpeed] = useState(1);
+  const [voices, setVoices] = useState<VoiceOption[]>([]);
+  const [voice, setVoice] = useState("");
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [exportingMp3Id, setExportingMp3Id] =
@@ -151,12 +164,30 @@ export default function AudiobooksPage() {
   useEffect(() => {
     async function initialize(): Promise<void> {
       try {
-        const storedBooks = await requestJson<BookSummary[]>(
-          `${API_URL}/books`,
-        );
+        const [storedBooks, voiceData] = await Promise.all([
+          requestJson<BookSummary[]>(
+            `${API_URL}/books`,
+          ),
+          requestJson<VoiceListResponse>(
+            `${API_URL}/tts/voices`,
+          ),
+        ]);
 
         setBooks(storedBooks);
         setBookId(storedBooks[0]?.id ?? null);
+        setVoices(voiceData.voices);
+
+        const defaultVoiceAvailable =
+          voiceData.voices.some(
+            (installedVoice) =>
+              installedVoice.id === voiceData.default_voice,
+          );
+
+        setVoice(
+          defaultVoiceAvailable
+            ? voiceData.default_voice
+            : (voiceData.voices[0]?.id ?? ""),
+        );
       } catch (caughtError) {
         showError(
           caughtError,
@@ -201,7 +232,10 @@ export default function AudiobooksPage() {
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ speed }),
+          body: JSON.stringify({
+            speed,
+            voice,
+          }),
         },
       );
 
@@ -459,6 +493,46 @@ export default function AudiobooksPage() {
                 )}
 
                 <div className="mt-6">
+                  <label
+                    className="block text-sm font-semibold"
+                    htmlFor="voice"
+                  >
+                    Narrator voice
+                  </label>
+
+                  {voices.length === 0 ? (
+                    <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+                      No complete Piper voices are installed.
+                    </p>
+                  ) : (
+                    <>
+                      <select
+                        className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 p-3"
+                        id="voice"
+                        onChange={(event) => {
+                          setVoice(event.target.value);
+                          clearMessages();
+                        }}
+                        value={voice}
+                      >
+                        {voices.map((installedVoice) => (
+                          <option
+                            key={installedVoice.id}
+                            value={installedVoice.id}
+                          >
+                            {installedVoice.name}
+                          </option>
+                        ))}
+                      </select>
+
+                      <p className="mt-2 text-xs text-slate-500">
+                        Local Piper voice · saved with this audiobook job
+                      </p>
+                    </>
+                  )}
+                </div>
+
+                <div className="mt-6">
                   <div className="flex justify-between text-sm">
                     <label
                       className="font-semibold"
@@ -490,6 +564,7 @@ export default function AudiobooksPage() {
                   className="mt-7 w-full rounded-lg bg-white px-5 py-3 font-semibold text-slate-950 disabled:opacity-50"
                   disabled={
                     !bookId ||
+                    !voice ||
                     creating ||
                     activeJob
                   }
@@ -568,6 +643,14 @@ export default function AudiobooksPage() {
                           {job.total_sections} sections ·{" "}
                           {job.speed.toFixed(2)}×
                         </p>
+
+                      <p className="mt-1 text-sm text-slate-500">
+                        Narrator:{" "}
+                        {voices.find(
+                          (installedVoice) =>
+                            installedVoice.id === job.voice,
+                        )?.name ?? job.voice}
+                      </p>
                       </div>
                     </div>
 

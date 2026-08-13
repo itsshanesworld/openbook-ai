@@ -38,7 +38,13 @@ from app.m4b_service import (
 )
 from app.models import AudiobookJob, Book
 from app.schemas import AudiobookCreateRequest
-from app.tts_service import get_tts_status
+from app.tts_service import (
+    TtsUnavailableError,
+    get_default_voice_name,
+    get_tts_status,
+    list_installed_voices,
+    resolve_voice_name,
+)
 
 router = APIRouter(tags=["Audiobooks"])
 
@@ -46,6 +52,15 @@ DatabaseSession = Annotated[
     Session,
     Depends(get_session),
 ]
+
+
+@router.get("/tts/voices")
+def list_tts_voices() -> dict[str, object]:
+    """Return locally installed Piper narrator voices."""
+    return {
+        "default_voice": get_default_voice_name(),
+        "voices": list_installed_voices(),
+    }
 
 
 @router.post(
@@ -78,12 +93,24 @@ def create_audiobook_job(
             ),
         )
 
-    tts_status = get_tts_status()
+    try:
+        voice_name = resolve_voice_name(
+            request.voice
+        )
+    except TtsUnavailableError as error:
+        raise HTTPException(
+            status_code=422,
+            detail=str(error),
+        ) from error
+
+    tts_status = get_tts_status(
+        voice_name
+    )
 
     if not bool(tts_status["available"]):
         raise HTTPException(
             status_code=503,
-            detail="The local Piper voice is unavailable.",
+            detail="The selected local Piper voice is unavailable.",
         )
 
     active_statement = select(AudiobookJob).where(
@@ -105,6 +132,7 @@ def create_audiobook_job(
         book_id=book_id,
         status="queued",
         speed=request.speed,
+        voice=voice_name,
         total_sections=len(sections),
         completed_sections=0,
     )
@@ -562,6 +590,10 @@ def serialize_job(
         "cover": get_cover_info(job.book_id),
         "status": job.status,
         "speed": job.speed,
+        "voice": (
+            job.voice
+            or get_default_voice_name()
+        ),
         "total_sections": job.total_sections,
         "completed_sections": job.completed_sections,
         "progress_percent": progress_percent,
