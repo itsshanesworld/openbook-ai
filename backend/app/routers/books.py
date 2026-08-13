@@ -37,6 +37,7 @@ from app.document_processing import (
     save_upload,
     split_into_narration_sections,
     extract_epub_metadata,
+    extract_epub_toc_titles,
     extract_pdf_metadata,
     extract_docx_metadata,
 )
@@ -138,8 +139,28 @@ async def upload_book(
             raise HTTPException(status_code=422, detail=detail)
 
         words = text.split()
-        chapter_titles = detect_chapters(text)
-        section_texts = split_into_narration_sections(text)
+        chapter_titles = detect_chapters(
+            text
+        )
+
+        if extension == ".epub":
+            epub_toc_titles = (
+                extract_epub_toc_titles(
+                    temporary_path
+                )
+            )
+
+            if epub_toc_titles:
+                chapter_titles = (
+                    epub_toc_titles
+                )
+
+        section_texts = (
+            split_into_narration_sections(
+                text,
+                chapter_headings=chapter_titles,
+            )
+        )
 
         book = Book(
             filename=filename,

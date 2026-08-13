@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import posixpath
 import re
 import tempfile
 from pathlib import Path
+from urllib.parse import unquote
 from typing import Callable
 
 import ebooklib
@@ -178,22 +180,393 @@ def extract_docx_metadata(
 
 
 def extract_epub(path: Path) -> str:
-    """Read text from EPUB document sections."""
+    """Read EPUB text in spine order with official TOC headings."""
     book = epub.read_epub(str(path))
+    toc_entries = get_epub_toc_entries(book)
     sections: list[str] = []
 
-    for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
-        soup = BeautifulSoup(item.get_content(), "html.parser")
+    for item in get_epub_reading_order(book):
+        soup = BeautifulSoup(
+            item.get_content(),
+            "html.parser",
+        )
 
-        for element in soup(["script", "style", "nav"]):
+        for element in soup(
+            ["script", "style", "nav"]
+        ):
             element.decompose()
 
-        section = soup.get_text("\n", strip=True)
+        item_name = normalize_epub_document_name(
+            get_epub_item_name(item)
+        )
+
+        matching_entries = [
+            (
+                title,
+                fragment,
+            )
+            for title, href, fragment in toc_entries
+            if epub_document_names_match(
+                item_name,
+                normalize_epub_document_name(href),
+            )
+        ]
+
+        inject_epub_toc_titles(
+            soup,
+            matching_entries,
+        )
+
+        section = soup.get_text(
+            "\n",
+            strip=True,
+        )
 
         if section:
             sections.append(section)
 
     return "\n\n".join(sections)
+
+
+def extract_epub_toc_titles(
+    path: Path,
+) -> list[str]:
+    """Return official playable chapter titles from an EPUB TOC."""
+    book = epub.read_epub(str(path))
+
+    return [
+        title
+        for title, _, _ in get_epub_toc_entries(book)
+    ]
+
+
+def get_epub_toc_entries(
+    book: epub.EpubBook,
+) -> list[tuple[str, str, str | None]]:
+    """Flatten usable EPUB TOC links while preserving TOC order."""
+    entries: list[tuple[str, str, str | None]] = []
+    seen: set[tuple[str, str, str | None]] = set()
+
+    def add_node(node: object) -> None:
+        title = clean_document_metadata_value(
+            getattr(
+                node,
+                "title",
+                None,
+            )
+        )
+
+        href_value = getattr(
+            node,
+            "href",
+            None,
+        )
+
+        if href_value is None:
+            name_getter = getattr(
+                node,
+                "get_name",
+                None,
+            )
+
+            if callable(name_getter):
+                href_value = name_getter()
+
+        href = clean_document_metadata_value(
+            href_value
+        )
+
+        if title is None or href is None:
+            return
+
+        document_href, fragment = split_epub_href(
+            href
+        )
+
+        if not document_href:
+            return
+
+        key = (
+            title.casefold(),
+            normalize_epub_document_name(
+                document_href
+            ),
+            fragment.casefold()
+            if fragment
+            else None,
+        )
+
+        if key in seen:
+            return
+
+        seen.add(key)
+
+        entries.append(
+            (
+                title,
+                document_href,
+                fragment,
+            )
+        )
+
+    def walk(nodes: object) -> None:
+        if not isinstance(
+            nodes,
+            (list, tuple),
+        ):
+            add_node(nodes)
+            return
+
+        for node in nodes:
+            if (
+                isinstance(node, tuple)
+                and len(node) == 2
+                and isinstance(
+                    node[1],
+                    (list, tuple),
+                )
+            ):
+                parent, children = node
+
+                add_node(parent)
+                walk(children)
+                continue
+
+            if isinstance(node, list):
+                walk(node)
+                continue
+
+            add_node(node)
+
+    walk(book.toc)
+
+    return entries
+
+
+def get_epub_reading_order(
+    book: epub.EpubBook,
+) -> list[object]:
+    """Return readable EPUB documents using spine order first."""
+    documents: list[object] = []
+    seen_names: set[str] = set()
+
+    def add_item(item: object | None) -> None:
+        if item is None:
+            return
+
+        type_getter = getattr(
+            item,
+            "get_type",
+            None,
+        )
+
+        if (
+            not callable(type_getter)
+            or type_getter()
+            != ebooklib.ITEM_DOCUMENT
+        ):
+            return
+
+        if isinstance(
+            item,
+            epub.EpubNav,
+        ):
+            return
+
+        name = normalize_epub_document_name(
+            get_epub_item_name(item)
+        )
+
+        if not name or name in seen_names:
+            return
+
+        seen_names.add(name)
+        documents.append(item)
+
+    for spine_entry in book.spine:
+        item_reference = (
+            spine_entry[0]
+            if isinstance(
+                spine_entry,
+                (list, tuple),
+            )
+            and spine_entry
+            else spine_entry
+        )
+
+        if hasattr(
+            item_reference,
+            "get_content",
+        ):
+            item = item_reference
+        else:
+            item = book.get_item_with_id(
+                str(item_reference)
+            )
+
+        add_item(item)
+
+    for item in book.get_items_of_type(
+        ebooklib.ITEM_DOCUMENT
+    ):
+        add_item(item)
+
+    return documents
+
+
+def get_epub_item_name(
+    item: object,
+) -> str:
+    """Return an EPUB manifest item's document name."""
+    name_getter = getattr(
+        item,
+        "get_name",
+        None,
+    )
+
+    if callable(name_getter):
+        return str(
+            name_getter()
+        )
+
+    return str(
+        getattr(
+            item,
+            "file_name",
+            "",
+        )
+    )
+
+
+def split_epub_href(
+    href: str,
+) -> tuple[str, str | None]:
+    """Split an EPUB href into document path and fragment."""
+    document_href, separator, fragment = (
+        href.partition("#")
+    )
+
+    decoded_document = unquote(
+        document_href
+    )
+
+    decoded_fragment = (
+        unquote(fragment)
+        if separator and fragment
+        else None
+    )
+
+    return (
+        decoded_document,
+        decoded_fragment,
+    )
+
+
+def normalize_epub_document_name(
+    value: str,
+) -> str:
+    """Normalize an EPUB document path for matching."""
+    document_name = unquote(
+        value.split(
+            "#",
+            1,
+        )[0]
+    ).replace(
+        "\\",
+        "/",
+    )
+
+    normalized = posixpath.normpath(
+        document_name
+    )
+
+    if normalized == ".":
+        return ""
+
+    while normalized.startswith(
+        "../"
+    ):
+        normalized = normalized[3:]
+
+    return normalized.lstrip("/")
+
+
+def epub_document_names_match(
+    item_name: str,
+    toc_name: str,
+) -> bool:
+    """Match equivalent manifest and TOC document paths."""
+    if not item_name or not toc_name:
+        return False
+
+    if item_name == toc_name:
+        return True
+
+    return (
+        item_name.endswith(
+            f"/{toc_name}"
+        )
+        or toc_name.endswith(
+            f"/{item_name}"
+        )
+    )
+
+
+def inject_epub_toc_titles(
+    soup: BeautifulSoup,
+    entries: list[tuple[str, str | None]],
+) -> None:
+    """Ensure official TOC titles appear at chapter boundaries."""
+    existing_lines = {
+        line.strip().casefold()
+        for line in soup.get_text(
+            "\n",
+            strip=True,
+        ).splitlines()
+        if line.strip()
+    }
+
+    for title, fragment in entries:
+        if title.casefold() in existing_lines:
+            continue
+
+        marker = soup.new_tag("p")
+        marker["data-openbook-toc-title"] = "true"
+        marker.string = title
+
+        target = None
+
+        if fragment:
+            target = soup.find(
+                id=fragment
+            )
+
+            if target is None:
+                target = soup.find(
+                    attrs={
+                        "name": fragment,
+                    }
+                )
+
+        if target is not None:
+            target.insert_before(
+                marker
+            )
+        else:
+            container = (
+                soup.body
+                if soup.body is not None
+                else soup
+            )
+
+            container.insert(
+                0,
+                marker,
+            )
+
+        existing_lines.add(
+            title.casefold()
+        )
 
 
 def extract_epub_metadata(
@@ -501,6 +874,7 @@ def detect_chapters(text: str) -> list[str]:
 def split_into_narration_sections(
     text: str,
     target_words: int = 350,
+    chapter_headings: list[str] | None = None,
 ) -> list[str]:
     """Split narration while keeping chapter boundaries intact."""
     normalized_text = normalize_text(text)
@@ -508,10 +882,21 @@ def split_into_narration_sections(
     if not normalized_text:
         return []
 
-    chapter_headings = {
+    detected_headings = detect_chapters(
+        normalized_text
+    )
+
+    all_chapter_headings = {
         heading.casefold()
-        for heading in detect_chapters(normalized_text)
+        for heading in detected_headings
     }
+
+    if chapter_headings:
+        all_chapter_headings.update(
+            heading.casefold()
+            for heading in chapter_headings
+            if heading.strip()
+        )
 
     paragraphs = [
         paragraph.strip()
@@ -603,7 +988,10 @@ def split_into_narration_sections(
         starts_with_heading = False
 
         for line in lines:
-            is_heading = line.casefold() in chapter_headings
+            is_heading = (
+                line.casefold()
+                in all_chapter_headings
+            )
 
             if is_heading:
                 if current_lines:
