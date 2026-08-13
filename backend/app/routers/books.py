@@ -45,7 +45,9 @@ from app.document_processing import (
     extract_epub_metadata,
     extract_epub_toc_titles,
     extract_pdf_metadata,
+    extract_pdf_chapter_titles,
     extract_docx_metadata,
+    extract_docx_chapter_titles,
 )
 from app.models import (
     Book,
@@ -149,17 +151,31 @@ async def upload_book(
             text
         )
 
+        structured_chapter_titles: list[str] = []
+
         if extension == ".epub":
-            epub_toc_titles = (
+            structured_chapter_titles = (
                 extract_epub_toc_titles(
                     temporary_path
                 )
             )
-
-            if epub_toc_titles:
-                chapter_titles = (
-                    epub_toc_titles
+        elif extension == ".pdf":
+            structured_chapter_titles = (
+                extract_pdf_chapter_titles(
+                    temporary_path
                 )
+            )
+        elif extension == ".docx":
+            structured_chapter_titles = (
+                extract_docx_chapter_titles(
+                    temporary_path
+                )
+            )
+
+        if structured_chapter_titles:
+            chapter_titles = (
+                structured_chapter_titles
+            )
 
         section_texts = (
             split_into_narration_sections(

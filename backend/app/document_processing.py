@@ -85,12 +85,126 @@ def extract_txt(path: Path) -> str:
 
 
 def extract_pdf(path: Path) -> str:
-    """Read text from a text-based PDF."""
+    """Read PDF text and preserve outline chapter boundaries."""
     with pymupdf.open(path) as document:
-        return "\n\n".join(
-            page.get_text("text")
-            for page in document
+        toc_entries = get_pdf_toc_entries(
+            document
         )
+
+        sections: list[str] = []
+
+        for page_index, page in enumerate(
+            document,
+            start=1,
+        ):
+            page_text = page.get_text(
+                "text"
+            ).strip()
+
+            existing_lines = {
+                line.strip().casefold()
+                for line in page_text.splitlines()
+                if line.strip()
+            }
+
+            page_titles = [
+                title
+                for title, page_number in toc_entries
+                if page_number == page_index
+                and title.casefold()
+                not in existing_lines
+            ]
+
+            page_parts = [
+                *page_titles,
+            ]
+
+            if page_text:
+                page_parts.append(
+                    page_text
+                )
+
+            section = "\n".join(
+                page_parts
+            ).strip()
+
+            if section:
+                sections.append(
+                    section
+                )
+
+    return "\n\n".join(
+        sections
+    )
+
+
+def extract_pdf_chapter_titles(
+    path: Path,
+) -> list[str]:
+    """Extract chapter titles from the PDF outline."""
+    with pymupdf.open(path) as document:
+        return [
+            title
+            for title, _ in get_pdf_toc_entries(
+                document
+            )
+        ]
+
+
+def get_pdf_toc_entries(
+    document: pymupdf.Document,
+) -> list[tuple[str, int]]:
+    """Return usable PDF outline titles and target pages."""
+    entries: list[tuple[str, int]] = []
+    seen: set[tuple[str, int]] = set()
+
+    for entry in document.get_toc(
+        simple=True
+    ):
+        if len(entry) < 3:
+            continue
+
+        title = clean_document_metadata_value(
+            entry[1]
+        )
+
+        page_number = entry[2]
+
+        if title is None:
+            continue
+
+        if not isinstance(
+            page_number,
+            int,
+        ):
+            continue
+
+        if (
+            page_number < 1
+            or page_number > document.page_count
+        ):
+            continue
+
+        key = (
+            title.casefold(),
+            page_number,
+        )
+
+        if key in seen:
+            continue
+
+        seen.add(
+            key
+        )
+
+        entries.append(
+            (
+                title,
+                page_number,
+            )
+        )
+
+    return entries
 
 
 def extract_pdf_metadata(
@@ -159,6 +273,56 @@ def extract_docx(path: Path) -> str:
                 sections.append(row_text)
 
     return "\n\n".join(sections)
+
+
+def extract_docx_chapter_titles(
+    path: Path,
+) -> list[str]:
+    """Extract chapter titles from Word Heading styles."""
+    document = Document(path)
+    chapters: list[str] = []
+    seen: set[str] = set()
+
+    heading_pattern = re.compile(
+        r"^Heading [1-9]$",
+        re.IGNORECASE,
+    )
+
+    for paragraph in document.paragraphs:
+        title = clean_document_metadata_value(
+            paragraph.text
+        )
+
+        if title is None:
+            continue
+
+        style = paragraph.style
+
+        style_name = (
+            style.name
+            if style is not None
+            else ""
+        )
+
+        if not heading_pattern.fullmatch(
+            style_name
+        ):
+            continue
+
+        key = title.casefold()
+
+        if key in seen:
+            continue
+
+        seen.add(
+            key
+        )
+
+        chapters.append(
+            title
+        )
+
+    return chapters
 
 
 def extract_docx_metadata(
