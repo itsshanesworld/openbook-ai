@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import shutil
 import subprocess
 import tempfile
@@ -15,6 +14,11 @@ from sqlmodel import Session, select
 from app.cover_service import get_cover_path
 from app.database import engine
 from app.document_processing import detect_chapters
+from app.metadata_service import (
+    detect_author_from_text,
+    detect_title_from_text,
+    resolve_book_metadata,
+)
 from app.export_service import (
     AUDIOBOOK_DIRECTORY,
     ExportError,
@@ -26,7 +30,6 @@ from app.models import (
     Book,
     Chapter,
     NarrationSection,
-    BookMetadata,
 )
 
 M4B_BITRATE = "64k"
@@ -111,14 +114,19 @@ def create_m4b_export(
         metadata_path.unlink(missing_ok=True)
 
         try:
+            (
+                book_title,
+                book_author,
+            ) = get_audiobook_metadata(
+                job,
+                book_filename,
+            )
+
             metadata_path.write_text(
                 build_chapter_metadata(
-                    get_audiobook_title(
-                        job,
-                        book_filename,
-                    ),
+                    book_title,
                     markers,
-                    author=get_audiobook_author(job),
+                    author=book_author,
                 ),
                 encoding="utf-8",
             )
@@ -502,11 +510,11 @@ def validate_timings(
         previous_start = timing.start_ms
 
 
-def get_audiobook_title(
+def get_audiobook_metadata(
     job: AudiobookJob,
     book_filename: str,
-) -> str:
-    """Return stored metadata, detected text, or filename title."""
+) -> tuple[str, str | None]:
+    """Resolve title and author for one audiobook export."""
     fallback_title = (
         Path(book_filename).stem
         or "OpenBook AI Audiobook"
@@ -518,192 +526,48 @@ def get_audiobook_title(
             job.book_id,
         )
 
-        metadata = session.exec(
-            select(BookMetadata)
-            .where(
-                BookMetadata.book_id
-                == job.book_id
-            )
-        ).first()
+        if book is None:
+            return fallback_title, None
 
-    if metadata is not None:
-        if (
-            metadata.manual_title is not None
-            and metadata.manual_title.strip()
-        ):
-            return metadata.manual_title.strip()
-
-        if (
-            metadata.title is not None
-            and metadata.title.strip()
-        ):
-            return metadata.title.strip()
-
-    if book is None:
-        return fallback_title
-
-    return detect_title_from_text(
-        book.extracted_text,
-        fallback_title,
-    )
+        return resolve_book_metadata(
+            book,
+            session,
+            fallback_title=fallback_title,
+        )
 
 
-def detect_title_from_text(
-    text: str,
-    fallback_title: str,
+def get_audiobook_title(
+    job: AudiobookJob,
+    book_filename: str,
 ) -> str:
-    """Detect a plausible title near the start of book text."""
-    ignored_starts = (
-        "chapter ",
-        "part ",
-        "section ",
-        "book ",
-        "introduction",
-        "prologue",
-        "preface",
-        "foreword",
-        "epilogue",
-        "afterword",
-        "contents",
-        "table of contents",
-        "copyright",
-        "by ",
+    """Return the effective audiobook title."""
+    title, _ = get_audiobook_metadata(
+        job,
+        book_filename,
     )
 
-    candidates = [
-        " ".join(line.split())
-        for line in text.splitlines()
-        if line.strip()
-    ]
-
-    for candidate in candidates[:12]:
-        normalized = candidate.casefold()
-
-        if not candidate:
-            continue
-
-        if len(candidate) > 120:
-            continue
-
-        if len(candidate.split()) > 18:
-            continue
-
-        if normalized.startswith(ignored_starts):
-            continue
-
-        if "http://" in normalized:
-            continue
-
-        if "https://" in normalized:
-            continue
-
-        if "@" in candidate:
-            continue
-
-        if "©" in candidate:
-            continue
-
-        if not any(
-            character.isalpha()
-            for character in candidate
-        ):
-            continue
-
-        return candidate
-
-    return fallback_title
+    return title
 
 
 def get_audiobook_author(
     job: AudiobookJob,
 ) -> str | None:
-    """Return stored metadata or a detected author byline."""
+    """Return the effective audiobook author."""
     with Session(engine) as session:
         book = session.get(
             Book,
             job.book_id,
         )
 
-        metadata = session.exec(
-            select(BookMetadata)
-            .where(
-                BookMetadata.book_id
-                == job.book_id
-            )
-        ).first()
+        if book is None:
+            return None
 
-    if metadata is not None:
-        if (
-            metadata.manual_author is not None
-            and metadata.manual_author.strip()
-        ):
-            return metadata.manual_author.strip()
-
-        if (
-            metadata.author is not None
-            and metadata.author.strip()
-        ):
-            return metadata.author.strip()
-
-    if book is None:
-        return None
-
-    return detect_author_from_text(
-        book.extracted_text,
-    )
-
-
-def detect_author_from_text(
-    text: str,
-) -> str | None:
-    """Detect an explicit author byline before book content."""
-    chapter_headings = {
-        " ".join(title.split()).casefold()
-        for title in detect_chapters(text)
-    }
-
-    author_pattern = re.compile(
-        r"^(?:by\s+|written\s+by\s+|author\s*[:.-]\s*)"
-        r"(.+)$",
-        re.IGNORECASE,
-    )
-
-    for raw_line in text.splitlines():
-        candidate = " ".join(raw_line.split())
-
-        if not candidate:
-            continue
-
-        normalized = candidate.casefold()
-
-        if normalized in chapter_headings:
-            break
-
-        match = author_pattern.match(candidate)
-
-        if match is None:
-            continue
-
-        author = match.group(1).strip(" .:-")
-
-        if not author:
-            continue
-
-        if len(author) > 100:
-            continue
-
-        if len(author.split()) > 12:
-            continue
-
-        if not any(
-            character.isalpha()
-            for character in author
-        ):
-            continue
+        _, author = resolve_book_metadata(
+            book,
+            session,
+        )
 
         return author
-
-    return None
 
 
 def build_chapter_metadata(

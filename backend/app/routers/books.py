@@ -27,6 +27,12 @@ from app.cover_service import (
     save_cover,
 )
 from app.database import get_session
+from app.metadata_service import (
+    clean_book_metadata_value,
+    get_book_metadata,
+    resolve_book_metadata,
+    serialize_book_metadata,
+)
 from app.document_processing import (
     ALLOWED_EXTENSIONS,
     detect_chapters,
@@ -771,90 +777,6 @@ def require_book_id(book: Book) -> int:
     return book.id
 
 
-def get_book_metadata(
-    session: Session,
-    book_id: int,
-) -> BookMetadata | None:
-    """Return stored metadata for one book."""
-    return session.exec(
-        select(BookMetadata)
-        .where(
-            BookMetadata.book_id == book_id
-        )
-    ).first()
-
-
-def clean_book_metadata_value(
-    value: str | None,
-) -> str | None:
-    """Normalize an editable metadata value."""
-    if value is None:
-        return None
-
-    cleaned = " ".join(
-        value.split()
-    ).strip()
-
-    return cleaned or None
-
-
-def serialize_book_metadata(
-    metadata: BookMetadata | None,
-) -> dict[str, object]:
-    """Convert stored book metadata for the frontend."""
-    if metadata is None:
-        return {
-            "title": None,
-            "author": None,
-            "automatic_title": None,
-            "automatic_author": None,
-            "manual_title": None,
-            "manual_author": None,
-            "source": None,
-        }
-
-    manual_title = clean_book_metadata_value(
-        metadata.manual_title
-    )
-    manual_author = clean_book_metadata_value(
-        metadata.manual_author
-    )
-
-    automatic_title = clean_book_metadata_value(
-        metadata.title
-    )
-    automatic_author = clean_book_metadata_value(
-        metadata.author
-    )
-
-    manual_override_active = (
-        manual_title is not None
-        or manual_author is not None
-    )
-
-    return {
-        "title": (
-            manual_title
-            if manual_title is not None
-            else automatic_title
-        ),
-        "author": (
-            manual_author
-            if manual_author is not None
-            else automatic_author
-        ),
-        "automatic_title": automatic_title,
-        "automatic_author": automatic_author,
-        "manual_title": manual_title,
-        "manual_author": manual_author,
-        "source": (
-            "manual"
-            if manual_override_active
-            else metadata.source
-        ),
-    }
-
-
 def get_chapters(
     session: Session,
     book_id: int,
@@ -930,35 +852,13 @@ def serialize_book_summary(
     """Convert a book into a frontend-safe summary."""
     book_id = require_book_id(book)
 
-    metadata = serialize_book_metadata(
-        get_book_metadata(
-            session,
-            book_id,
-        )
-    )
-
-    metadata_title = metadata.get("title")
-    metadata_author = metadata.get("author")
-
-    display_title = (
-        metadata_title.strip()
-        if (
-            isinstance(metadata_title, str)
-            and metadata_title.strip()
-        )
-        else (
-            Path(book.filename).stem
-            or book.filename
-        )
-    )
-
-    display_author = (
-        metadata_author.strip()
-        if (
-            isinstance(metadata_author, str)
-            and metadata_author.strip()
-        )
-        else None
+    (
+        display_title,
+        display_author,
+    ) = resolve_book_metadata(
+        book,
+        session,
+        use_text_fallback=False,
     )
 
     return {
