@@ -95,6 +95,67 @@ interface ErrorResponse {
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+const NARRATOR_STORAGE_KEY =
+  "openbook-audiobooks-narrator";
+const SPEED_STORAGE_KEY =
+  "openbook-audiobooks-speed";
+const MIN_NARRATION_SPEED = 0.75;
+const MAX_NARRATION_SPEED = 1.5;
+
+function readStoredNarrator(): string | null {
+  try {
+    const value = window.localStorage.getItem(
+      NARRATOR_STORAGE_KEY,
+    );
+
+    const cleaned = value?.trim() ?? "";
+
+    return cleaned || null;
+  } catch {
+    return null;
+  }
+}
+
+function readStoredNarrationSpeed(): number | null {
+  try {
+    const value = window.localStorage.getItem(
+      SPEED_STORAGE_KEY,
+    );
+
+    if (value === null) {
+      return null;
+    }
+
+    const parsed = Number(value);
+
+    if (
+      !Number.isFinite(parsed) ||
+      parsed < MIN_NARRATION_SPEED ||
+      parsed > MAX_NARRATION_SPEED
+    ) {
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveAudiobookPreference(
+  key: string,
+  value: string,
+): void {
+  try {
+    window.localStorage.setItem(
+      key,
+      value,
+    );
+  } catch {
+    // Preferences are optional when browser storage is unavailable.
+  }
+}
+
 async function requestJson<T extends object>(
   url: string,
   options?: RequestInit,
@@ -244,17 +305,44 @@ export default function AudiobooksPage() {
         setVoices(voiceData.voices);
         setStorageStatus(storageData);
 
+        const storedNarrator =
+          readStoredNarrator();
+
+        const storedNarratorAvailable =
+          storedNarrator !== null &&
+          voiceData.voices.some(
+            (installedVoice) =>
+              installedVoice.id === storedNarrator,
+          );
+
         const defaultVoiceAvailable =
           voiceData.voices.some(
             (installedVoice) =>
               installedVoice.id === voiceData.default_voice,
           );
 
-        setVoice(
-          defaultVoiceAvailable
-            ? voiceData.default_voice
-            : (voiceData.voices[0]?.id ?? ""),
-        );
+        const selectedVoice =
+          storedNarratorAvailable
+            ? storedNarrator
+            : defaultVoiceAvailable
+              ? voiceData.default_voice
+              : (voiceData.voices[0]?.id ?? "");
+
+        setVoice(selectedVoice);
+
+        if (selectedVoice) {
+          saveAudiobookPreference(
+            NARRATOR_STORAGE_KEY,
+            selectedVoice,
+          );
+        }
+
+        const storedSpeed =
+          readStoredNarrationSpeed();
+
+        if (storedSpeed !== null) {
+          setSpeed(storedSpeed);
+        }
       } catch (caughtError) {
         showError(
           caughtError,
@@ -749,7 +837,16 @@ export default function AudiobooksPage() {
                         className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 p-3"
                         id="voice"
                         onChange={(event) => {
-                          setVoice(event.target.value);
+                          const nextVoice =
+                            event.target.value;
+
+                          setVoice(nextVoice);
+
+                          saveAudiobookPreference(
+                            NARRATOR_STORAGE_KEY,
+                            nextVoice,
+                          );
+
                           clearVoicePreview();
                           clearMessages();
                         }}
@@ -815,9 +912,20 @@ export default function AudiobooksPage() {
                     id="speed"
                     max={1.5}
                     min={0.75}
-                    onChange={(event) =>
-                      setSpeed(Number(event.target.value))
-                    }
+                    onChange={(event) => {
+                      const nextSpeed = Number(
+                        event.target.value,
+                      );
+
+                      setSpeed(nextSpeed);
+
+                      saveAudiobookPreference(
+                        SPEED_STORAGE_KEY,
+                        String(nextSpeed),
+                      );
+
+                      clearVoicePreview();
+                    }}
                     step={0.05}
                     type="range"
                     value={speed}
