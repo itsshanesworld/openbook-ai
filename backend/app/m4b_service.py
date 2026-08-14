@@ -22,6 +22,7 @@ from app.metadata_service import (
 from app.export_service import (
     AUDIOBOOK_DIRECTORY,
     ExportError,
+    get_valid_job_output_path,
     require_completed_wav,
 )
 from app.models import (
@@ -240,8 +241,13 @@ def get_m4b_export_path(
     job: AudiobookJob,
 ) -> Path:
     """Return the M4B path belonging to a job."""
-    source_path = require_completed_wav(job)
-    return source_path.with_suffix(".m4b")
+    source_path = get_valid_job_output_path(
+        job
+    )
+
+    return source_path.with_suffix(
+        ".m4b"
+    )
 
 
 def get_m4b_export_info(

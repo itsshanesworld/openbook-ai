@@ -26,6 +26,7 @@ from app.export_service import (
     create_mp3_export as build_mp3_export,
     delete_mp3_export,
     get_mp3_export_info,
+    get_valid_job_output_path,
     require_mp3_export,
 )
 from app.m4b_service import (
@@ -475,6 +476,180 @@ def download_m4b_audiobook(
     )
 
 
+@router.delete(
+    "/audiobook-jobs/{job_id}/exports/mp3"
+)
+def delete_single_mp3_export(
+    job_id: int,
+    session: DatabaseSession,
+) -> dict[str, object]:
+    """Delete only the MP3 export for one inactive job."""
+    job, book = get_job_and_book(
+        session,
+        job_id,
+    )
+
+    ensure_cleanup_job_is_inactive(
+        job
+    )
+
+    info = get_mp3_export_info(
+        job
+    )
+
+    if not bool(info["available"]):
+        raise HTTPException(
+            status_code=404,
+            detail="This audiobook has no MP3 export to delete.",
+        )
+
+    freed_bytes = int(
+        info["size_bytes"] or 0
+    )
+
+    delete_mp3_export(
+        job
+    )
+
+    return {
+        "deleted": True,
+        "kind": "mp3",
+        "freed_bytes": freed_bytes,
+        "job": serialize_job(
+            job,
+            book,
+            session,
+        ),
+    }
+
+
+@router.delete(
+    "/audiobook-jobs/{job_id}/exports/m4b"
+)
+def delete_single_m4b_export(
+    job_id: int,
+    session: DatabaseSession,
+) -> dict[str, object]:
+    """Delete only the M4B export for one inactive job."""
+    job, book = get_job_and_book(
+        session,
+        job_id,
+    )
+
+    ensure_cleanup_job_is_inactive(
+        job
+    )
+
+    info = get_m4b_export_info(
+        job
+    )
+
+    if not bool(info["available"]):
+        raise HTTPException(
+            status_code=404,
+            detail="This audiobook has no M4B export to delete.",
+        )
+
+    freed_bytes = int(
+        info["size_bytes"] or 0
+    )
+
+    delete_m4b_export(
+        job
+    )
+
+    return {
+        "deleted": True,
+        "kind": "m4b",
+        "freed_bytes": freed_bytes,
+        "job": serialize_job(
+            job,
+            book,
+            session,
+        ),
+    }
+
+
+@router.delete(
+    "/audiobook-jobs/{job_id}/exports/wav"
+)
+def delete_wav_master(
+    job_id: int,
+    session: DatabaseSession,
+) -> dict[str, object]:
+    """Delete a WAV master while preserving a compressed copy."""
+    job, book = get_job_and_book(
+        session,
+        job_id,
+    )
+
+    ensure_cleanup_job_is_inactive(
+        job
+    )
+
+    wav_info = get_wav_export_info(
+        job
+    )
+
+    if not bool(wav_info["available"]):
+        raise HTTPException(
+            status_code=404,
+            detail="This audiobook has no WAV master to delete.",
+        )
+
+    mp3_info = get_mp3_export_info(
+        job
+    )
+
+    m4b_info = get_m4b_export_info(
+        job
+    )
+
+    if not (
+        bool(mp3_info["available"])
+        or bool(m4b_info["available"])
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Create or keep an MP3 or M4B export before "
+                "deleting the WAV master. This prevents the "
+                "last playable audiobook copy from being "
+                "removed accidentally."
+            ),
+        )
+
+    freed_bytes = int(
+        wav_info["size_bytes"] or 0
+    )
+
+    delete_job_output(
+        job
+    )
+
+    job.output_size_bytes = None
+
+    session.add(
+        job
+    )
+
+    session.commit()
+    session.refresh(
+        job
+    )
+
+    return {
+        "deleted": True,
+        "kind": "wav",
+        "freed_bytes": freed_bytes,
+        "job": serialize_job(
+            job,
+            book,
+            session,
+        ),
+    }
+
+
 @router.delete("/audiobook-jobs/{job_id}")
 def delete_audiobook_job(
     job_id: int,
@@ -516,6 +691,58 @@ def delete_audiobook_job(
     return {
         "deleted": True,
         "job_id": job_id,
+    }
+
+
+def ensure_cleanup_job_is_inactive(
+    job: AudiobookJob,
+) -> None:
+    """Reject cleanup while audiobook generation is active."""
+    if job.status in {
+        "queued",
+        "running",
+    }:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Audiobook files cannot be cleaned up "
+                "while generation is active."
+            ),
+        )
+
+
+def get_wav_export_info(
+    job: AudiobookJob,
+) -> dict[str, object]:
+    """Return frontend-safe WAV master information."""
+    try:
+        output_path = get_valid_job_output_path(
+            job
+        )
+    except ExportError:
+        return {
+            "available": False,
+            "filename": None,
+            "size_bytes": None,
+        }
+
+    available = (
+        output_path.is_file()
+        and output_path.stat().st_size > 0
+    )
+
+    return {
+        "available": available,
+        "filename": (
+            output_path.name
+            if available
+            else None
+        ),
+        "size_bytes": (
+            output_path.stat().st_size
+            if available
+            else None
+        ),
     }
 
 
@@ -603,6 +830,26 @@ def serialize_job(
             session,
         )
 
+    wav_info = get_wav_export_info(
+        job
+    )
+
+    mp3_info = get_mp3_export_info(
+        job
+    )
+
+    m4b_info = get_m4b_export_info(
+        job
+    )
+
+    can_delete_wav = (
+        bool(wav_info["available"])
+        and (
+            bool(mp3_info["available"])
+            or bool(m4b_info["available"])
+        )
+    )
+
     return {
         "id": job.id,
         "book_id": job.book_id,
@@ -620,10 +867,12 @@ def serialize_job(
         "completed_sections": job.completed_sections,
         "progress_percent": progress_percent,
         "output_filename": job.output_filename,
-        "output_size_bytes": job.output_size_bytes,
+        "output_size_bytes": wav_info["size_bytes"],
+        "wav_available": bool(wav_info["available"]),
+        "can_delete_wav": can_delete_wav,
         "error_message": job.error_message,
         "created_at": job.created_at,
         "updated_at": job.updated_at,
-        "mp3": get_mp3_export_info(job),
-        "m4b": get_m4b_export_info(job),
+        "mp3": mp3_info,
+        "m4b": m4b_info,
     }

@@ -80,6 +80,8 @@ interface AudiobookJob {
   progress_percent: number;
   output_filename: string | null;
   output_size_bytes: number | null;
+  wav_available: boolean;
+  can_delete_wav: boolean;
   error_message: string | null;
   updated_at: string;
   mp3: Mp3Export;
@@ -150,6 +152,9 @@ export default function AudiobooksPage() {
     useState<number | null>(null);
   const [deletingId, setDeletingId] =
     useState<number | null>(null);
+  const [deletingArtifact, setDeletingArtifact] =
+    useState<string | null>(null);
+
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -450,6 +455,78 @@ export default function AudiobooksPage() {
       );
     } finally {
       setExportingM4bId(null);
+    }
+  }
+
+  async function refreshStorageAfterCleanup(): Promise<void> {
+    try {
+      const status = await requestJson<StorageStatus>(
+        `${API_URL}/storage/status`,
+      );
+
+      setStorageStatus(status);
+    } catch {
+      // The periodic storage refresh will retry.
+    }
+  }
+
+  async function deleteExport(
+    jobId: number,
+    kind: "wav" | "mp3" | "m4b",
+  ): Promise<void> {
+    const cleanupId = `${jobId}-${kind}`;
+
+    setDeletingArtifact(cleanupId);
+    clearMessages();
+
+    try {
+      const response = await fetch(
+        `${API_URL}/audiobook-jobs/${jobId}/exports/${kind}`,
+        {
+          method: "DELETE",
+        },
+      );
+
+      if (!response.ok) {
+        let data: ErrorResponse = {};
+
+        try {
+          data = (await response.json()) as ErrorResponse;
+        } catch {
+          data = {};
+        }
+
+        throw new Error(
+          getErrorMessage(
+            data,
+            response.status,
+          ),
+        );
+      }
+
+      const result = (await response.json()) as {
+        freed_bytes?: number;
+      };
+
+      await loadJobs();
+      await refreshStorageAfterCleanup();
+
+      const freedBytes = result.freed_bytes ?? 0;
+
+      setMessage(
+        freedBytes > 0
+          ? `${kind.toUpperCase()} removed. ${formatFileSize(
+              freedBytes,
+            )} of storage was reclaimed.`
+          : `${kind.toUpperCase()} removed.`,
+      );
+    } catch (caughtError) {
+      showError(
+        caughtError,
+        "The audiobook file could not be deleted.",
+      );
+    } finally {
+      setDeletingArtifact(null);
     }
   }
 
@@ -871,29 +948,37 @@ export default function AudiobooksPage() {
                           WAV original
                         </h4>
 
-                        <audio
-                          className="mt-3 w-full"
-                          controls
-                          preload="metadata"
-                          src={`${API_URL}/audiobook-jobs/${job.id}/audio`}
-                        />
+                        {job.wav_available ? (
+                          <>
+                            <audio
+                              className="mt-3 w-full"
+                              controls
+                              preload="metadata"
+                              src={`${API_URL}/audiobook-jobs/${job.id}/audio`}
+                            />
 
-                        <div className="mt-4 flex flex-wrap items-center gap-4">
-                          <a
-                            className="font-semibold text-cyan-300"
-                            href={`${API_URL}/audiobook-jobs/${job.id}/download`}
-                          >
-                            Download WAV
-                          </a>
+                            <div className="mt-4 flex flex-wrap items-center gap-4">
+                              <a
+                                className="font-semibold text-cyan-300"
+                                href={`${API_URL}/audiobook-jobs/${job.id}/download`}
+                              >
+                                Download WAV
+                              </a>
 
-                          {job.output_size_bytes && (
-                            <span className="text-sm text-slate-400">
-                              {formatFileSize(
-                                job.output_size_bytes,
+                              {job.output_size_bytes && (
+                                <span className="text-sm text-slate-400">
+                                  {formatFileSize(
+                                    job.output_size_bytes,
+                                  )}
+                                </span>
                               )}
-                            </span>
-                          )}
-                        </div>
+                            </div>
+                          </>
+                        ) : (
+                          <p className="mt-3 text-sm text-slate-400">
+                            WAV master removed to save storage.
+                          </p>
+                        )}
                       </div>
 
                       <div className="rounded-xl border border-slate-700 bg-slate-900 p-4">
@@ -906,6 +991,7 @@ export default function AudiobooksPage() {
                             className="mt-4 rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50"
                             disabled={
                               storageStatus?.critical ||
+                              !job.wav_available ||
                               exportingMp3Id === job.id
                             }
                             onClick={() =>
@@ -962,6 +1048,7 @@ export default function AudiobooksPage() {
                             className="mt-4 rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50"
                             disabled={
                               storageStatus?.critical ||
+                              !job.wav_available ||
                               exportingM4bId === job.id
                             }
                             onClick={() =>
@@ -994,6 +1081,104 @@ export default function AudiobooksPage() {
                               )}
                             </div>
                           </>
+                        )}
+                      </div>
+
+                      <div className="rounded-xl border border-slate-700 bg-slate-900 p-4">
+                        <h4 className="font-semibold">
+                          Storage cleanup
+                        </h4>
+
+                        <p className="mt-2 text-sm leading-6 text-slate-400">
+                          Remove individual audio files without
+                          deleting this audiobook job, metadata,
+                          chapters, cover, or narrator settings.
+                        </p>
+
+                        <div className="mt-4 flex flex-wrap gap-3">
+                          {job.wav_available && (
+                            <button
+                              className="rounded-lg border border-amber-500/50 px-4 py-2 text-sm font-semibold text-amber-200 disabled:cursor-not-allowed disabled:opacity-40"
+                              disabled={
+                                !job.can_delete_wav ||
+                                deletingArtifact !== null
+                              }
+                              onClick={() =>
+                                void deleteExport(
+                                  job.id,
+                                  "wav",
+                                )
+                              }
+                              title={
+                                job.can_delete_wav
+                                  ? "Delete the WAV master"
+                                  : "Keep an MP3 or M4B copy before deleting the WAV"
+                              }
+                              type="button"
+                            >
+                              {deletingArtifact ===
+                              `${job.id}-wav`
+                                ? "Deleting WAV..."
+                                : "Delete WAV master"}
+                            </button>
+                          )}
+
+                          {job.mp3?.available && (
+                            <button
+                              className="rounded-lg border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-200 disabled:opacity-40"
+                              disabled={
+                                deletingArtifact !== null
+                              }
+                              onClick={() =>
+                                void deleteExport(
+                                  job.id,
+                                  "mp3",
+                                )
+                              }
+                              type="button"
+                            >
+                              {deletingArtifact ===
+                              `${job.id}-mp3`
+                                ? "Deleting MP3..."
+                                : "Delete MP3"}
+                            </button>
+                          )}
+
+                          {job.m4b?.available && (
+                            <button
+                              className="rounded-lg border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-200 disabled:opacity-40"
+                              disabled={
+                                deletingArtifact !== null
+                              }
+                              onClick={() =>
+                                void deleteExport(
+                                  job.id,
+                                  "m4b",
+                                )
+                              }
+                              type="button"
+                            >
+                              {deletingArtifact ===
+                              `${job.id}-m4b`
+                                ? "Deleting M4B..."
+                                : "Delete M4B"}
+                            </button>
+                          )}
+                        </div>
+
+                        {job.wav_available &&
+                          !job.can_delete_wav && (
+                            <p className="mt-3 text-xs text-amber-300">
+                              Create or keep an MP3 or M4B copy
+                              before deleting the WAV master.
+                            </p>
+                          )}
+
+                        {!job.wav_available && (
+                          <p className="mt-3 text-xs text-slate-500">
+                            WAV master already removed. Existing
+                            compressed exports remain playable.
+                          </p>
                         )}
                       </div>
 
