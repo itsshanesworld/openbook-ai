@@ -10,8 +10,13 @@ from pathlib import Path
 from app.audiobook_service import AUDIOBOOK_DIRECTORY
 from app.models import AudiobookJob
 
+from app.storage_service import (
+    StorageError,
+    ensure_storage_capacity,
+    estimate_compressed_export_size,
+)
+
 MP3_BITRATE = "64k"
-MINIMUM_FREE_SPACE_BYTES = 50 * 1024 * 1024
 
 _export_lock = threading.RLock()
 
@@ -324,26 +329,22 @@ def get_valid_job_output_path(
     return output_path
 
 
-def ensure_export_space(source_path: Path) -> None:
-    """Verify that there is enough room for an MP3 export."""
-    estimated_mp3_size = max(
-        2 * 1024 * 1024,
-        source_path.stat().st_size // 10,
-    )
-
-    required_space = (
-        estimated_mp3_size + MINIMUM_FREE_SPACE_BYTES
-    )
-    available_space = shutil.disk_usage(
-        AUDIOBOOK_DIRECTORY
-    ).free
-
-    if required_space > available_space:
-        required_mb = round(required_space / 1024 / 1024)
-        available_mb = round(available_space / 1024 / 1024)
-
-        raise ExportError(
-            "Not enough Linux storage for MP3 export. "
-            f"Approximately {required_mb} MB is required, "
-            f"but only {available_mb} MB is available."
+def ensure_export_space(
+    source_path: Path,
+) -> None:
+    """Ensure enough protected storage exists for an MP3 export."""
+    estimated_output_size = (
+        estimate_compressed_export_size(
+            source_path
         )
+    )
+
+    try:
+        ensure_storage_capacity(
+            estimated_output_size,
+            operation="MP3 export",
+        )
+    except StorageError as error:
+        raise ExportError(
+            str(error)
+        ) from error

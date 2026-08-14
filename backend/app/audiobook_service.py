@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import shutil
 import wave
 from collections.abc import Callable, Sequence
 from io import BytesIO
@@ -19,13 +18,13 @@ from app.models import (
     NarrationSection,
     utc_timestamp,
 )
+from app.storage_service import ensure_storage_capacity
 from app.tts_service import synthesize_wav
 
 BACKEND_DIRECTORY = Path(__file__).resolve().parent.parent
 AUDIOBOOK_DIRECTORY = BACKEND_DIRECTORY / "data" / "audiobooks"
 
 SECTION_PAUSE_SECONDS = 0.35
-MINIMUM_FREE_SPACE_BYTES = 100 * 1024 * 1024
 
 AUDIOBOOK_DIRECTORY.mkdir(parents=True, exist_ok=True)
 
@@ -453,36 +452,16 @@ def ensure_available_disk_space(
     total_words: int,
     speed: float,
 ) -> None:
-    """Ensure enough disk space exists for generation."""
-    estimated_output_size = (
-        estimate_output_size_bytes(
-            total_words,
-            speed,
-        )
+    """Ensure enough protected storage exists for WAV generation."""
+    estimated_output_size = estimate_output_size_bytes(
+        total_words,
+        speed,
     )
 
-    required_space = (
-        estimated_output_size
-        + MINIMUM_FREE_SPACE_BYTES
+    ensure_storage_capacity(
+        estimated_output_size,
+        operation="WAV audiobook generation",
     )
-
-    available_space = shutil.disk_usage(
-        AUDIOBOOK_DIRECTORY
-    ).free
-
-    if required_space > available_space:
-        required_mb = round(
-            required_space / 1024 / 1024
-        )
-        available_mb = round(
-            available_space / 1024 / 1024
-        )
-
-        raise RuntimeError(
-            "Not enough Linux storage for this audiobook. "
-            f"Approximately {required_mb} MB is required, "
-            f"but only {available_mb} MB is available."
-        )
 
 
 def recover_interrupted_audiobook_jobs() -> None:

@@ -15,6 +15,7 @@ from sqlmodel import Session, select
 from app.audiobook_service import (
     delete_job_output,
     get_book_sections,
+    ensure_available_disk_space,
     run_audiobook_job,
 )
 from app.cover_service import get_cover_info, get_cover_path
@@ -38,6 +39,7 @@ from app.m4b_service import (
 )
 from app.models import AudiobookJob, Book
 from app.schemas import AudiobookCreateRequest
+from app.storage_service import get_storage_status
 from app.tts_service import (
     TtsUnavailableError,
     get_default_voice_name,
@@ -52,6 +54,12 @@ DatabaseSession = Annotated[
     Session,
     Depends(get_session),
 ]
+
+
+@router.get("/storage/status")
+def storage_status() -> dict[str, int | bool]:
+    """Return current Linux storage safety information."""
+    return get_storage_status()
 
 
 @router.get("/tts/voices")
@@ -112,6 +120,20 @@ def create_audiobook_job(
             status_code=503,
             detail="The selected local Piper voice is unavailable.",
         )
+
+    try:
+        ensure_available_disk_space(
+            total_words=sum(
+                section.word_count
+                for section in sections
+            ),
+            speed=request.speed,
+        )
+    except RuntimeError as error:
+        raise HTTPException(
+            status_code=422,
+            detail=str(error),
+        ) from error
 
     active_statement = select(AudiobookJob).where(
         AudiobookJob.book_id == book_id,

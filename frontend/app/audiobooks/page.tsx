@@ -17,6 +17,16 @@ interface CoverInfo {
   media_type: string | null;
 }
 
+interface StorageStatus {
+  total_bytes: number;
+  used_bytes: number;
+  free_bytes: number;
+  warning_threshold_bytes: number;
+  reserve_bytes: number;
+  low: boolean;
+  critical: boolean;
+}
+
 interface VoiceOption {
   id: string;
   name: string;
@@ -126,6 +136,8 @@ export default function AudiobooksPage() {
   const [speed, setSpeed] = useState(1);
   const [voices, setVoices] = useState<VoiceOption[]>([]);
   const [voice, setVoice] = useState("");
+  const [storageStatus, setStorageStatus] =
+    useState<StorageStatus | null>(null);
   const [previewingVoice, setPreviewingVoice] = useState(false);
   const [voicePreviewUrl, setVoicePreviewUrl] =
     useState<string | null>(null);
@@ -162,6 +174,34 @@ export default function AudiobooksPage() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function refreshStorageStatus(): Promise<void> {
+      try {
+        const status = await requestJson<StorageStatus>(
+          `${API_URL}/storage/status`,
+        );
+
+        if (!cancelled) {
+          setStorageStatus(status);
+        }
+      } catch {
+        // Existing backend errors remain surfaced by user actions.
+      }
+    }
+
+    const timer = window.setInterval(
+      () => void refreshStorageStatus(),
+      15000,
+    );
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
   const loadJobs = useCallback(async (): Promise<void> => {
     if (!bookId) {
       setJobs([]);
@@ -178,18 +218,26 @@ export default function AudiobooksPage() {
   useEffect(() => {
     async function initialize(): Promise<void> {
       try {
-        const [storedBooks, voiceData] = await Promise.all([
+        const [
+          storedBooks,
+          voiceData,
+          storageData,
+        ] = await Promise.all([
           requestJson<BookSummary[]>(
             `${API_URL}/books`,
           ),
           requestJson<VoiceListResponse>(
             `${API_URL}/tts/voices`,
           ),
+          requestJson<StorageStatus>(
+            `${API_URL}/storage/status`,
+          ),
         ]);
 
         setBooks(storedBooks);
         setBookId(storedBooks[0]?.id ?? null);
         setVoices(voiceData.voices);
+        setStorageStatus(storageData);
 
         const defaultVoiceAvailable =
           voiceData.voices.some(
@@ -499,6 +547,31 @@ export default function AudiobooksPage() {
           <Message type="success">{message}</Message>
         )}
 
+        {storageStatus?.low && (
+          <div
+            className={`mt-5 rounded-xl border p-4 text-sm ${
+              storageStatus.critical
+                ? "border-red-500/40 bg-red-500/10 text-red-200"
+                : "border-amber-500/40 bg-amber-500/10 text-amber-100"
+            }`}
+          >
+            <p className="font-semibold">
+              {storageStatus.critical
+                ? "Storage critically low"
+                : "Linux storage is running low"}
+            </p>
+
+            <p className="mt-1 leading-6">
+              {formatFileSize(storageStatus.free_bytes)} free.
+              {" "}
+              OpenBook AI protects a{" "}
+              {formatFileSize(storageStatus.reserve_bytes)} safety
+              reserve and will block audiobook or export jobs that
+              would cross it.
+            </p>
+          </div>
+        )}
+
         <section className="mt-10 grid gap-6 lg:grid-cols-[320px_1fr]">
           <aside className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
             <h2 className="text-xl font-bold">
@@ -677,6 +750,7 @@ export default function AudiobooksPage() {
                 <button
                   className="mt-7 w-full rounded-lg bg-white px-5 py-3 font-semibold text-slate-950 disabled:opacity-50"
                   disabled={
+                    storageStatus?.critical ||
                     !bookId ||
                     !voice ||
                     creating ||
@@ -831,6 +905,7 @@ export default function AudiobooksPage() {
                           <button
                             className="mt-4 rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50"
                             disabled={
+                              storageStatus?.critical ||
                               exportingMp3Id === job.id
                             }
                             onClick={() =>
@@ -886,6 +961,7 @@ export default function AudiobooksPage() {
                           <button
                             className="mt-4 rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50"
                             disabled={
+                              storageStatus?.critical ||
                               exportingM4bId === job.id
                             }
                             onClick={() =>

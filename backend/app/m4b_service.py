@@ -32,8 +32,13 @@ from app.models import (
     NarrationSection,
 )
 
+from app.storage_service import (
+    StorageError,
+    ensure_storage_capacity,
+    estimate_compressed_export_size,
+)
+
 M4B_BITRATE = "64k"
-MINIMUM_FREE_SPACE_BYTES = 50 * 1024 * 1024
 
 _export_lock = threading.RLock()
 
@@ -99,7 +104,7 @@ def create_m4b_export(
             job.book_id
         )
 
-        ensure_m4b_space()
+        ensure_m4b_space(source_path)
 
         temporary_output = output_path.with_name(
             f".{output_path.stem}.temporary.m4b"
@@ -628,18 +633,22 @@ def escape_metadata(
     )
 
 
-def ensure_m4b_space() -> None:
-    """Keep a safety buffer on the Linux disk."""
-    free_bytes = shutil.disk_usage(
-        AUDIOBOOK_DIRECTORY
-    ).free
-
-    if free_bytes < MINIMUM_FREE_SPACE_BYTES:
-        free_mb = round(
-            free_bytes / 1024 / 1024
+def ensure_m4b_space(
+    source_path: Path,
+) -> None:
+    """Ensure enough protected storage exists for an M4B export."""
+    estimated_output_size = (
+        estimate_compressed_export_size(
+            source_path
         )
+    )
 
+    try:
+        ensure_storage_capacity(
+            estimated_output_size,
+            operation="M4B export",
+        )
+    except StorageError as error:
         raise ExportError(
-            "There is not enough free Linux storage. "
-            f"Only about {free_mb} MB remains."
-        )
+            str(error)
+        ) from error
