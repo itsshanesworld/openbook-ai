@@ -9,6 +9,7 @@ from pathlib import Path
 
 from app.audiobook_service import AUDIOBOOK_DIRECTORY
 from app.models import AudiobookJob
+from app.tts_service import get_voice_display_name
 
 from app.storage_service import (
     StorageError,
@@ -90,6 +91,10 @@ def create_mp3_export(
             else None
         )
 
+        resolved_narrator = get_voice_display_name(
+            job.voice
+        )
+
         valid_cover_path = (
             cover_path
             if (
@@ -169,6 +174,9 @@ def create_mp3_export(
                 f"album={resolved_title}",
                 "-metadata",
                 "encoded_by=OpenBook AI",
+                *build_mp3_narrator_metadata_arguments(
+                    resolved_narrator
+                ),
             ]
         )
 
@@ -230,6 +238,16 @@ def get_mp3_export_path(job: AudiobookJob) -> Path:
     """Return the MP3 path associated with an audiobook job."""
     source_path = get_valid_job_output_path(job)
     return source_path.with_suffix(".mp3")
+
+
+def build_mp3_narrator_metadata_arguments(
+    narrator: str,
+) -> list[str]:
+    """Build narrator metadata arguments for an MP3 export."""
+    return [
+        "-metadata",
+        f"comment=Narrated by {narrator}",
+    ]
 
 
 def get_mp3_export_info(

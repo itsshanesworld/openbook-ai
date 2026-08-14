@@ -33,6 +33,8 @@ from app.models import (
     NarrationSection,
 )
 
+from app.tts_service import get_voice_display_name
+
 from app.storage_service import (
     StorageError,
     ensure_storage_capacity,
@@ -133,7 +135,8 @@ def create_m4b_export(
                     book_title,
                     markers,
                     author=book_author,
-                ),
+
+                    narrator=get_voice_display_name(job.voice),),
                 encoding="utf-8",
             )
 
@@ -585,6 +588,7 @@ def build_chapter_metadata(
     book_title: str,
     markers: list[ChapterMarker],
     author: str | None = None,
+    narrator: str | None = None,
 ) -> str:
     """Build FFmpeg chapter metadata."""
     title = (
@@ -606,6 +610,11 @@ def build_chapter_metadata(
         )
 
     lines.append("encoded_by=OpenBook AI")
+
+    if narrator:
+        lines.append(
+            f"comment=Narrated by {narrator}"
+        )
 
     for marker in markers:
         lines.extend(

@@ -64,6 +64,20 @@ def list_installed_voices() -> list[dict[str, str]]:
     return voices
 
 
+def get_voice_display_name(
+    voice_name: str | None,
+) -> str:
+    """Return the readable name for a selected or default voice."""
+    resolved_voice_name = (
+        voice_name
+        or get_default_voice_name()
+    )
+
+    return format_voice_display_name(
+        resolved_voice_name
+    )
+
+
 def format_voice_display_name(
     voice_name: str,
 ) -> str:
