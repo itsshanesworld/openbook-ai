@@ -9,6 +9,12 @@ from app.document_processing import detect_chapters
 from app.models import Book, BookMetadata
 
 
+AUTOMATIC_AUTHOR_PLACEHOLDERS = frozenset(
+    {
+        "python-docx",
+    }
+)
+
 def get_book_metadata(
     session: Session,
     book_id: int,
@@ -33,6 +39,24 @@ def clean_book_metadata_value(
     ).strip()
 
     return cleaned or None
+
+
+def clean_automatic_author_metadata_value(
+    value: str | None,
+) -> str | None:
+    """Normalize automatic author metadata and reject generators."""
+    cleaned = clean_book_metadata_value(
+        value
+    )
+
+    if (
+        cleaned is not None
+        and cleaned.casefold()
+        in AUTOMATIC_AUTHOR_PLACEHOLDERS
+    ):
+        return None
+
+    return cleaned
 
 
 def first_nonempty_value(
@@ -77,8 +101,10 @@ def serialize_book_metadata(
         metadata.title
     )
 
-    automatic_author = clean_book_metadata_value(
-        metadata.author
+    automatic_author = (
+        clean_automatic_author_metadata_value(
+            metadata.author
+        )
     )
 
     manual_override_active = (
@@ -147,7 +173,9 @@ def resolve_book_metadata(
 
         author = first_nonempty_value(
             metadata.manual_author,
-            metadata.author,
+            clean_automatic_author_metadata_value(
+                metadata.author
+            ),
         )
 
     if use_text_fallback:

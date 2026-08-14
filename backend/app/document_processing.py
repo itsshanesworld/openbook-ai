@@ -340,6 +340,12 @@ def extract_docx_metadata(
         properties.author
     )
 
+    if (
+        author is not None
+        and author.casefold() == "python-docx"
+    ):
+        author = None
+
     return title, author
 
 

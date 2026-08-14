@@ -11,6 +11,7 @@ from pathlib import Path
 from sqlmodel import Session, select
 
 from app.database import engine
+from app.metadata_service import resolve_book_metadata
 from app.models import (
     AudiobookJob,
     AudiobookSectionTiming,
@@ -25,6 +26,7 @@ BACKEND_DIRECTORY = Path(__file__).resolve().parent.parent
 AUDIOBOOK_DIRECTORY = BACKEND_DIRECTORY / "data" / "audiobooks"
 
 SECTION_PAUSE_SECONDS = 0.35
+MAX_OUTPUT_FILENAME_STEM_LENGTH = 180
 
 AUDIOBOOK_DIRECTORY.mkdir(parents=True, exist_ok=True)
 
@@ -81,8 +83,17 @@ def run_audiobook_job(job_id: int) -> None:
                 speed=job.speed,
             )
 
+            (
+                book_title,
+                book_author,
+            ) = resolve_book_metadata(
+                book,
+                session,
+            )
+
             output_filename = build_output_filename(
-                book.filename,
+                book_title,
+                book_author,
                 job_id,
             )
             output_path = (
@@ -402,23 +413,78 @@ def get_book_sections(
 
 
 def build_output_filename(
-    original_filename: str,
+    title: str,
+    author: str | None,
     job_id: int,
 ) -> str:
-    """Create a safe audiobook filename."""
-    stem = Path(original_filename).stem
+    """Create a readable, collision-safe audiobook filename."""
+    safe_title = sanitize_filename_component(
+        title,
+        fallback="OpenBook AI",
+    )
 
-    safe_stem = re.sub(
-        r"[^A-Za-z0-9_-]+",
-        "-",
-        stem,
-    ).strip("-_")
+    safe_author = (
+        sanitize_filename_component(
+            author,
+            fallback="",
+        )
+        if author is not None
+        else ""
+    )
 
-    if not safe_stem:
-        safe_stem = "openbook"
+    readable_name = (
+        f"{safe_title} - {safe_author}"
+        if safe_author
+        else safe_title
+    )
+
+    unique_suffix = (
+        f" - audiobook-{job_id}"
+    )
+
+    maximum_readable_length = max(
+        1,
+        MAX_OUTPUT_FILENAME_STEM_LENGTH
+        - len(unique_suffix),
+    )
+
+    readable_name = (
+        readable_name[
+            :maximum_readable_length
+        ]
+        .rstrip(" .-_")
+    )
+
+    if not readable_name:
+        readable_name = "OpenBook AI"
 
     return (
-        f"{safe_stem}-audiobook-{job_id}.wav"
+        f"{readable_name}"
+        f"{unique_suffix}.wav"
+    )
+
+
+def sanitize_filename_component(
+    value: str,
+    *,
+    fallback: str,
+) -> str:
+    """Make metadata safe for portable audiobook filenames."""
+    cleaned = re.sub(
+        r'[\x00-\x1f<>:"/\\|?*]+',
+        " ",
+        value,
+    )
+
+    cleaned = re.sub(
+        r"\s+",
+        " ",
+        cleaned,
+    )
+
+    return (
+        cleaned.strip(" .-_")
+        or fallback
     )
 
 
