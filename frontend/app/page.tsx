@@ -77,12 +77,83 @@ interface TtsStatus {
   max_preview_characters: number;
 }
 
+interface VoiceOption {
+  id: string;
+  name: string;
+}
+
+interface VoiceListResponse {
+  default_voice: string;
+  voices: VoiceOption[];
+}
+
 interface ErrorResponse {
   detail?: string | Array<{ msg?: string }>;
 }
 
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+const NARRATOR_STORAGE_KEY =
+  "openbook-audiobooks-narrator";
+const SPEED_STORAGE_KEY =
+  "openbook-audiobooks-speed";
+const MIN_NARRATION_SPEED = 0.75;
+const MAX_NARRATION_SPEED = 1.5;
+
+function readStoredNarrator(): string | null {
+  try {
+    const value = window.localStorage.getItem(
+      NARRATOR_STORAGE_KEY,
+    );
+
+    const cleaned = value?.trim() ?? "";
+
+    return cleaned || null;
+  } catch {
+    return null;
+  }
+}
+
+function readStoredNarrationSpeed(): number | null {
+  try {
+    const value = window.localStorage.getItem(
+      SPEED_STORAGE_KEY,
+    );
+
+    if (value === null) {
+      return null;
+    }
+
+    const parsed = Number(value);
+
+    if (
+      !Number.isFinite(parsed) ||
+      parsed < MIN_NARRATION_SPEED ||
+      parsed > MAX_NARRATION_SPEED
+    ) {
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveAudiobookPreference(
+  key: string,
+  value: string,
+): void {
+  try {
+    window.localStorage.setItem(
+      key,
+      value,
+    );
+  } catch {
+    // Preview preferences are optional without browser storage.
+  }
+}
 
 async function requestJson<T extends object>(
   url: string,
@@ -201,6 +272,8 @@ export default function Home() {
     useState(false);
   const [targetWords, setTargetWords] = useState(350);
   const [previewSpeed, setPreviewSpeed] = useState(1);
+  const [previewVoice, setPreviewVoice] = useState("");
+  const [voices, setVoices] = useState<VoiceOption[]>([]);
   const [audioUrl, setAudioUrl] =
     useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -225,6 +298,16 @@ export default function Home() {
         (section) => section.id === activeSectionId,
       ),
     [activeSectionId, sections],
+  );
+
+  const selectedPreviewVoiceName = useMemo(
+    () =>
+      voices.find(
+        (installedVoice) =>
+          installedVoice.id === previewVoice,
+      )?.name ??
+      previewVoice,
+    [previewVoice, voices],
   );
 
   const replaceAudioUrl = useCallback(
@@ -267,11 +350,20 @@ export default function Home() {
   useEffect(() => {
     async function initialize(): Promise<void> {
       try {
-        const [health, localTtsStatus] = await Promise.all([
+        const [
+          health,
+          localTtsStatus,
+          voiceData,
+        ] = await Promise.all([
           requestJson<{ status: string }>(
             `${API_URL}/health`,
           ),
-          requestJson<TtsStatus>(`${API_URL}/tts/status`),
+          requestJson<TtsStatus>(
+            `${API_URL}/tts/status`,
+          ),
+          requestJson<VoiceListResponse>(
+            `${API_URL}/tts/voices`,
+          ),
         ]);
 
         if (health.status !== "online") {
@@ -280,8 +372,48 @@ export default function Home() {
           );
         }
 
+        const storedNarrator =
+          readStoredNarrator();
+
+        const storedNarratorAvailable =
+          storedNarrator !== null &&
+          voiceData.voices.some(
+            (installedVoice) =>
+              installedVoice.id === storedNarrator,
+          );
+
+        const defaultVoiceAvailable =
+          voiceData.voices.some(
+            (installedVoice) =>
+              installedVoice.id === voiceData.default_voice,
+          );
+
+        const selectedVoice =
+          storedNarratorAvailable
+            ? storedNarrator
+            : defaultVoiceAvailable
+              ? voiceData.default_voice
+              : (voiceData.voices[0]?.id ?? "");
+
+        const storedSpeed =
+          readStoredNarrationSpeed();
+
         setApiStatus("online");
         setTtsStatus(localTtsStatus);
+        setVoices(voiceData.voices);
+        setPreviewVoice(selectedVoice);
+
+        if (selectedVoice) {
+          saveAudiobookPreference(
+            NARRATOR_STORAGE_KEY,
+            selectedVoice,
+          );
+        }
+
+        if (storedSpeed !== null) {
+          setPreviewSpeed(storedSpeed);
+        }
+
         await loadBooks();
       } catch {
         setApiStatus("offline");
@@ -684,9 +816,9 @@ export default function Home() {
       return;
     }
 
-    if (!ttsStatus?.available) {
+    if (!previewVoice) {
       setError(
-        "The local Piper voice is not installed.",
+        "No local Piper narrator voice is installed.",
       );
       return;
     }
@@ -704,6 +836,7 @@ export default function Home() {
           body: JSON.stringify({
             text: draftText,
             speed: previewSpeed,
+            voice: previewVoice,
           }),
         },
       );
@@ -716,7 +849,8 @@ export default function Home() {
         setSuccessMessage(
           `Preview generated from the first ${
             preview.characterCount ??
-            ttsStatus.max_preview_characters
+            ttsStatus?.max_preview_characters ??
+            1800
           } characters.`,
         );
       } else {
@@ -1582,15 +1716,64 @@ export default function Home() {
 
                     <span
                       className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                        ttsStatus?.available
+                        previewVoice
                           ? "bg-emerald-500/15 text-emerald-300"
                           : "bg-amber-500/15 text-amber-300"
                       }`}
                     >
-                      {ttsStatus?.available
-                        ? `${ttsStatus.voice} ready`
+                      {previewVoice
+                        ? `${selectedPreviewVoiceName} ready`
                         : "Voice unavailable"}
                     </span>
+                  </div>
+
+                  <div className="mt-5">
+                    <label
+                      className="text-sm font-semibold"
+                      htmlFor="preview-voice"
+                    >
+                      Narrator voice
+                    </label>
+
+                    {voices.length === 0 ? (
+                      <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+                        No complete Piper voices are installed.
+                      </p>
+                    ) : (
+                      <select
+                        className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-900 p-3"
+                        id="preview-voice"
+                        onChange={(event) => {
+                          const nextVoice =
+                            event.target.value;
+
+                          replaceAudioUrl(null);
+                          setPreviewVoice(nextVoice);
+
+                          saveAudiobookPreference(
+                            NARRATOR_STORAGE_KEY,
+                            nextVoice,
+                          );
+
+                          clearMessages();
+                        }}
+                        value={previewVoice}
+                      >
+                        {voices.map((installedVoice) => (
+                          <option
+                            key={installedVoice.id}
+                            value={installedVoice.id}
+                          >
+                            {installedVoice.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+
+                    <p className="mt-2 text-xs leading-5 text-slate-500">
+                      Shared with your saved Audiobooks narrator
+                      preference.
+                    </p>
                   </div>
 
                   <div className="mt-5">
@@ -1613,10 +1796,19 @@ export default function Home() {
                       max={1.5}
                       min={0.75}
                       onChange={(event) => {
-                        replaceAudioUrl(null);
-                        setPreviewSpeed(
-                          Number(event.target.value),
+                        const nextSpeed = Number(
+                          event.target.value,
                         );
+
+                        replaceAudioUrl(null);
+                        setPreviewSpeed(nextSpeed);
+
+                        saveAudiobookPreference(
+                          SPEED_STORAGE_KEY,
+                          String(nextSpeed),
+                        );
+
+                        clearMessages();
                       }}
                       step={0.05}
                       type="range"
@@ -1640,7 +1832,7 @@ export default function Home() {
                     disabled={
                       previewing ||
                       !draftText.trim() ||
-                      !ttsStatus?.available
+                      !previewVoice
                     }
                     onClick={() =>
                       void generateAudioPreview()
