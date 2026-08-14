@@ -358,6 +358,10 @@ def download_wav_audiobook(
 def generate_mp3_export(
     job_id: int,
     session: DatabaseSession,
+    delete_wav_after_export: Annotated[
+        bool,
+        Query(),
+    ] = False,
 ) -> dict[str, object]:
     """Create a compressed MP3 from a completed WAV."""
     job, book = get_job_and_book(
@@ -374,7 +378,7 @@ def generate_mp3_export(
             session,
         )
 
-        build_mp3_export(
+        export_path = build_mp3_export(
             job,
             book.filename,
             title=book_title,
@@ -389,7 +393,13 @@ def generate_mp3_export(
             detail=str(error),
         ) from error
 
-    return serialize_job(job, book, session)
+    return serialize_export_result(
+        job,
+        book,
+        session,
+        export_path=export_path,
+        delete_wav_after_export=delete_wav_after_export,
+    )
 
 
 @router.get("/audiobook-jobs/{job_id}/audio/mp3")
@@ -447,6 +457,10 @@ def download_mp3_audiobook(
 def generate_m4b_export(
     job_id: int,
     session: DatabaseSession,
+    delete_wav_after_export: Annotated[
+        bool,
+        Query(),
+    ] = False,
 ) -> dict[str, object]:
     """Create a chaptered M4B from a completed WAV."""
     job, book = get_job_and_book(
@@ -455,7 +469,7 @@ def generate_m4b_export(
     )
 
     try:
-        build_m4b_export(
+        export_path = build_m4b_export(
             job,
             book.filename,
         )
@@ -465,7 +479,13 @@ def generate_m4b_export(
             detail=str(error),
         ) from error
 
-    return serialize_job(job, book, session)
+    return serialize_export_result(
+        job,
+        book,
+        session,
+        export_path=export_path,
+        delete_wav_after_export=delete_wav_after_export,
+    )
 
 
 
@@ -784,6 +804,106 @@ def delete_audiobook_job(
         "deleted": True,
         "job_id": job_id,
     }
+
+
+def cleanup_wav_after_successful_export(
+    job: AudiobookJob,
+    export_path: Path,
+    session: Session,
+) -> int:
+    """Remove a WAV only after verifying a compressed export."""
+    if (
+        not export_path.is_file()
+        or export_path.stat().st_size <= 0
+    ):
+        raise RuntimeError(
+            "The compressed export could not be verified, "
+            "so the WAV master was kept."
+        )
+
+    wav_info = get_wav_export_info(
+        job
+    )
+
+    if not bool(wav_info["available"]):
+        return 0
+
+    freed_bytes = int(
+        wav_info["size_bytes"] or 0
+    )
+
+    try:
+        delete_job_output(
+            job
+        )
+
+        job.output_size_bytes = None
+
+        session.add(
+            job
+        )
+        session.commit()
+        session.refresh(
+            job
+        )
+    except Exception as error:
+        session.rollback()
+
+        raise RuntimeError(
+            "The compressed export was created, but "
+            f"automatic WAV cleanup failed: {error}"
+        ) from error
+
+    return freed_bytes
+
+
+def serialize_export_result(
+    job: AudiobookJob,
+    book: Book,
+    session: Session,
+    *,
+    export_path: Path,
+    delete_wav_after_export: bool,
+) -> dict[str, object]:
+    """Serialize an export and optionally clean up its WAV master."""
+    freed_bytes = 0
+    cleanup_warning: str | None = None
+
+    if delete_wav_after_export:
+        try:
+            freed_bytes = (
+                cleanup_wav_after_successful_export(
+                    job,
+                    export_path,
+                    session,
+                )
+            )
+        except Exception as error:
+            cleanup_warning = str(
+                error
+            )
+
+    response = serialize_job(
+        job,
+        book,
+        session,
+    )
+
+    response.update(
+        {
+            "wav_cleanup_requested": (
+                delete_wav_after_export
+            ),
+            "wav_cleanup_freed_bytes": (
+                freed_bytes
+            ),
+            "wav_cleanup_warning": (
+                cleanup_warning
+            ),
+        }
+    )
+
+    return response
 
 
 def ensure_cleanup_job_is_inactive(

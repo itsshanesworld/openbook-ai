@@ -94,6 +94,9 @@ interface AudiobookJob {
   output_size_bytes: number | null;
   wav_available: boolean;
   can_delete_wav: boolean;
+  wav_cleanup_requested?: boolean;
+  wav_cleanup_freed_bytes?: number;
+  wav_cleanup_warning?: string | null;
   error_message: string | null;
   updated_at: string;
   mp3: Mp3Export;
@@ -227,6 +230,10 @@ export default function AudiobooksPage() {
     useState<number | null>(null);
   const [exportingM4bId, setExportingM4bId] =
     useState<number | null>(null);
+  const [
+    removeWavAfterExport,
+    setRemoveWavAfterExport,
+  ] = useState(false);
   const [deletingId, setDeletingId] =
     useState<number | null>(null);
   const [deletingArtifact, setDeletingArtifact] =
@@ -554,7 +561,7 @@ export default function AudiobooksPage() {
 
     try {
       const updatedJob = await requestJson<AudiobookJob>(
-        `${API_URL}/audiobook-jobs/${jobId}/exports/mp3`,
+        `${API_URL}/audiobook-jobs/${jobId}/exports/mp3?delete_wav_after_export=${removeWavAfterExport}`,
         {
           method: "POST",
         },
@@ -566,9 +573,27 @@ export default function AudiobooksPage() {
         ),
       );
 
-      setMessage(
-        "Compressed MP3 audiobook created successfully.",
-      );
+      if (removeWavAfterExport) {
+        await refreshStorageAfterCleanup();
+      }
+
+      if (updatedJob.wav_cleanup_warning) {
+        setMessage(
+          `Compressed MP3 audiobook created successfully. ${updatedJob.wav_cleanup_warning}`,
+        );
+      } else if (
+        (updatedJob.wav_cleanup_freed_bytes ?? 0) > 0
+      ) {
+        setMessage(
+          `Compressed MP3 audiobook created successfully. WAV master removed automatically; ${formatFileSize(
+            updatedJob.wav_cleanup_freed_bytes ?? 0,
+          )} reclaimed.`,
+        );
+      } else {
+        setMessage(
+          "Compressed MP3 audiobook created successfully.",
+        );
+      }
     } catch (caughtError) {
       showError(
         caughtError,
@@ -585,7 +610,7 @@ export default function AudiobooksPage() {
 
     try {
       const updatedJob = await requestJson<AudiobookJob>(
-        `${API_URL}/audiobook-jobs/${jobId}/exports/m4b`,
+        `${API_URL}/audiobook-jobs/${jobId}/exports/m4b?delete_wav_after_export=${removeWavAfterExport}`,
         {
           method: "POST",
         },
@@ -597,9 +622,27 @@ export default function AudiobooksPage() {
         ),
       );
 
-      setMessage(
-        "Chaptered M4B audiobook created successfully.",
-      );
+      if (removeWavAfterExport) {
+        await refreshStorageAfterCleanup();
+      }
+
+      if (updatedJob.wav_cleanup_warning) {
+        setMessage(
+          `Chaptered M4B audiobook created successfully. ${updatedJob.wav_cleanup_warning}`,
+        );
+      } else if (
+        (updatedJob.wav_cleanup_freed_bytes ?? 0) > 0
+      ) {
+        setMessage(
+          `Chaptered M4B audiobook created successfully. WAV master removed automatically; ${formatFileSize(
+            updatedJob.wav_cleanup_freed_bytes ?? 0,
+          )} reclaimed.`,
+        );
+      } else {
+        setMessage(
+          "Chaptered M4B audiobook created successfully.",
+        );
+      }
     } catch (caughtError) {
       showError(
         caughtError,
@@ -1092,6 +1135,38 @@ export default function AudiobooksPage() {
                     </p>
                   )}
                 </div>
+
+                <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-xl border border-slate-700 bg-slate-950 p-4">
+                  <input
+                    checked={removeWavAfterExport}
+                    className="mt-1 h-4 w-4"
+                    onChange={(event) => {
+                      setRemoveWavAfterExport(
+                        event.target.checked,
+                      );
+                      clearMessages();
+                    }}
+                    type="checkbox"
+                  />
+
+                  <span>
+                    <span className="block text-sm font-semibold text-white">
+                      Remove WAV after successful export
+                    </span>
+
+                    <span className="mt-1 block text-xs leading-5 text-slate-400">
+                      Applies to MP3 and M4B exports below. Off by
+                      default. OpenBook AI verifies the compressed
+                      file before removing the WAV master.
+                    </span>
+
+                    <span className="mt-2 block text-xs leading-5 text-amber-300">
+                      After the WAV is removed, the other compressed
+                      format cannot be created from that job unless
+                      you generate a new WAV.
+                    </span>
+                  </span>
+                </label>
 
                 <button
                   className="mt-7 w-full rounded-lg bg-white px-5 py-3 font-semibold text-slate-950 disabled:opacity-50"
