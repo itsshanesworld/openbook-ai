@@ -17,6 +17,7 @@ from app.audiobook_service import (
     delete_job_output,
     get_book_sections,
     ensure_available_disk_space,
+    estimate_audiobook_duration_seconds,
     estimate_output_size_bytes,
     run_audiobook_job,
 )
@@ -111,6 +112,13 @@ def get_audiobook_storage_estimate(
         for section in sections
     )
 
+    estimated_duration_seconds = (
+        estimate_audiobook_duration_seconds(
+            total_words,
+            speed,
+        )
+    )
+
     estimated_output_bytes = (
         estimate_output_size_bytes(
             total_words,
@@ -128,6 +136,9 @@ def get_audiobook_storage_estimate(
         "book_id": book_id,
         "speed": speed,
         "total_words": total_words,
+        "estimated_duration_seconds": round(
+            estimated_duration_seconds
+        ),
         "estimated_output_bytes": int(
             capacity[
                 "estimated_output_bytes"

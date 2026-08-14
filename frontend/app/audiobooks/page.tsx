@@ -31,6 +31,7 @@ interface GenerationEstimate {
   book_id: number;
   speed: number;
   total_words: number;
+  estimated_duration_seconds: number;
   estimated_output_bytes: number;
   free_bytes: number;
   reserve_bytes: number;
@@ -1048,7 +1049,7 @@ export default function AudiobooksPage() {
                 >
                   <div className="flex items-center justify-between gap-3">
                     <p className="font-semibold">
-                      Pre-generation storage estimate
+                      Pre-generation estimate
                     </p>
 
                     {generationEstimate && (
@@ -1073,6 +1074,15 @@ export default function AudiobooksPage() {
                   ) : generationEstimate ? (
                     <>
                       <dl className="mt-4 space-y-2 text-slate-300">
+                        <div className="flex justify-between gap-4">
+                          <dt>Estimated duration</dt>
+                          <dd className="font-semibold text-white">
+                            {formatDuration(
+                              generationEstimate.estimated_duration_seconds,
+                            )}
+                          </dd>
+                        </div>
+
                         <div className="flex justify-between gap-4">
                           <dt>Estimated WAV</dt>
                           <dd className="font-semibold text-white">
@@ -1129,7 +1139,7 @@ export default function AudiobooksPage() {
                     </>
                   ) : (
                     <p className="mt-3 text-slate-400">
-                      Storage estimate is temporarily unavailable.
+                      Generation estimate is temporarily unavailable.
                       The backend safety check will still protect
                       generation.
                     </p>
@@ -1740,6 +1750,36 @@ function formatTimestamp(
     minutes,
     seconds.toString().padStart(2, "0"),
   ].join(":");
+}
+
+
+function formatDuration(
+  totalSeconds: number,
+): string {
+  const roundedSeconds = Math.max(
+    0,
+    Math.round(totalSeconds),
+  );
+
+  const hours = Math.floor(
+    roundedSeconds / 3600,
+  );
+
+  const minutes = Math.floor(
+    (roundedSeconds % 3600) / 60,
+  );
+
+  const seconds = roundedSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours} hr ${minutes} min`;
+  }
+
+  if (minutes > 0) {
+    return `${minutes} min ${seconds} sec`;
+  }
+
+  return `${seconds} sec`;
 }
 
 

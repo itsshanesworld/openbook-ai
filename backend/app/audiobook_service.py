@@ -497,16 +497,34 @@ def get_temporary_output_path(
     )
 
 
+def estimate_audiobook_duration_seconds(
+    total_words: int,
+    speed: float,
+) -> float:
+    """Estimate audiobook duration from word count and speed."""
+    if speed <= 0:
+        raise ValueError(
+            "Narration speed must be greater than zero."
+        )
+
+    return (
+        max(total_words, 1)
+        / 160
+        * 60
+        / speed
+    )
+
+
 def estimate_output_size_bytes(
     total_words: int,
     speed: float,
 ) -> int:
     """Estimate uncompressed WAV output size."""
     estimated_seconds = (
-        max(total_words, 1)
-        / 160
-        * 60
-        / speed
+        estimate_audiobook_duration_seconds(
+            total_words,
+            speed,
+        )
     )
 
     return round(
