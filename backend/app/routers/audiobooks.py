@@ -70,6 +70,16 @@ def storage_status() -> dict[str, int | bool]:
     return get_storage_status()
 
 
+@router.get("/storage/audiobooks-summary")
+def audiobook_storage_summary(
+    session: DatabaseSession,
+) -> dict[str, int]:
+    """Return verified audiobook file storage totals."""
+    return build_audiobook_storage_summary(
+        session
+    )
+
+
 @router.get("/books/{book_id}/audiobook-estimate")
 def get_audiobook_storage_estimate(
     book_id: int,
@@ -941,6 +951,108 @@ def ensure_cleanup_job_is_inactive(
                 "while generation is active."
             ),
         )
+
+
+def build_audiobook_storage_summary(
+    session: Session,
+) -> dict[str, int]:
+    """Summarize verified files belonging to audiobook jobs."""
+    jobs = session.exec(
+        select(AudiobookJob)
+    ).all()
+
+    wav_bytes = 0
+    mp3_bytes = 0
+    m4b_bytes = 0
+
+    wav_count = 0
+    mp3_count = 0
+    m4b_count = 0
+
+    reclaimable_wav_bytes = 0
+    reclaimable_wav_count = 0
+
+    for job in jobs:
+        wav_info = get_wav_export_info(
+            job
+        )
+
+        mp3_info = get_mp3_export_info(
+            job
+        )
+
+        m4b_info = get_m4b_export_info(
+            job
+        )
+
+        wav_available = bool(
+            wav_info["available"]
+        )
+
+        mp3_available = bool(
+            mp3_info["available"]
+        )
+
+        m4b_available = bool(
+            m4b_info["available"]
+        )
+
+        current_wav_bytes = int(
+            wav_info["size_bytes"] or 0
+        )
+
+        current_mp3_bytes = int(
+            mp3_info["size_bytes"] or 0
+        )
+
+        current_m4b_bytes = int(
+            m4b_info["size_bytes"] or 0
+        )
+
+        if wav_available:
+            wav_count += 1
+            wav_bytes += current_wav_bytes
+
+        if mp3_available:
+            mp3_count += 1
+            mp3_bytes += current_mp3_bytes
+
+        if m4b_available:
+            m4b_count += 1
+            m4b_bytes += current_m4b_bytes
+
+        if (
+            wav_available
+            and (
+                mp3_available
+                or m4b_available
+            )
+        ):
+            reclaimable_wav_count += 1
+            reclaimable_wav_bytes += (
+                current_wav_bytes
+            )
+
+    return {
+        "job_count": len(jobs),
+        "wav_count": wav_count,
+        "mp3_count": mp3_count,
+        "m4b_count": m4b_count,
+        "wav_bytes": wav_bytes,
+        "mp3_bytes": mp3_bytes,
+        "m4b_bytes": m4b_bytes,
+        "total_bytes": (
+            wav_bytes
+            + mp3_bytes
+            + m4b_bytes
+        ),
+        "reclaimable_wav_count": (
+            reclaimable_wav_count
+        ),
+        "reclaimable_wav_bytes": (
+            reclaimable_wav_bytes
+        ),
+    }
 
 
 def get_wav_export_info(

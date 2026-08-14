@@ -27,6 +27,19 @@ interface StorageStatus {
   critical: boolean;
 }
 
+interface AudiobookStorageSummary {
+  job_count: number;
+  wav_count: number;
+  mp3_count: number;
+  m4b_count: number;
+  wav_bytes: number;
+  mp3_bytes: number;
+  m4b_bytes: number;
+  total_bytes: number;
+  reclaimable_wav_count: number;
+  reclaimable_wav_bytes: number;
+}
+
 interface GenerationEstimate {
   book_id: number;
   speed: number;
@@ -219,6 +232,8 @@ export default function AudiobooksPage() {
   const [voice, setVoice] = useState("");
   const [storageStatus, setStorageStatus] =
     useState<StorageStatus | null>(null);
+  const [storageSummary, setStorageSummary] =
+    useState<AudiobookStorageSummary | null>(null);
   const [generationEstimate, setGenerationEstimate] =
     useState<GenerationEstimate | null>(null);
   const [estimateLoading, setEstimateLoading] =
@@ -269,22 +284,33 @@ export default function AudiobooksPage() {
   useEffect(() => {
     let cancelled = false;
 
-    async function refreshStorageStatus(): Promise<void> {
+    async function refreshStorageInformation(): Promise<void> {
       try {
-        const status = await requestJson<StorageStatus>(
-          `${API_URL}/storage/status`,
-        );
+        const [
+          status,
+          summary,
+        ] = await Promise.all([
+          requestJson<StorageStatus>(
+            `${API_URL}/storage/status`,
+          ),
+          requestJson<AudiobookStorageSummary>(
+            `${API_URL}/storage/audiobooks-summary`,
+          ),
+        ]);
 
         if (!cancelled) {
           setStorageStatus(status);
+          setStorageSummary(summary);
         }
       } catch {
-        // Existing backend errors remain surfaced by user actions.
+        // Existing user actions continue to surface backend errors.
       }
     }
 
+    void refreshStorageInformation();
+
     const timer = window.setInterval(
-      () => void refreshStorageStatus(),
+      () => void refreshStorageInformation(),
       15000,
     );
 
@@ -576,9 +602,7 @@ export default function AudiobooksPage() {
         ),
       );
 
-      if (removeWavAfterExport) {
-        await refreshStorageAfterCleanup();
-      }
+      await refreshStorageAfterCleanup();
 
       if (updatedJob.wav_cleanup_warning) {
         setMessage(
@@ -625,9 +649,7 @@ export default function AudiobooksPage() {
         ),
       );
 
-      if (removeWavAfterExport) {
-        await refreshStorageAfterCleanup();
-      }
+      await refreshStorageAfterCleanup();
 
       if (updatedJob.wav_cleanup_warning) {
         setMessage(
@@ -658,13 +680,22 @@ export default function AudiobooksPage() {
 
   async function refreshStorageAfterCleanup(): Promise<void> {
     try {
-      const status = await requestJson<StorageStatus>(
-        `${API_URL}/storage/status`,
-      );
+      const [
+        status,
+        summary,
+      ] = await Promise.all([
+        requestJson<StorageStatus>(
+          `${API_URL}/storage/status`,
+        ),
+        requestJson<AudiobookStorageSummary>(
+          `${API_URL}/storage/audiobooks-summary`,
+        ),
+      ]);
 
       setStorageStatus(status);
+      setStorageSummary(summary);
     } catch {
-      // The periodic storage refresh will retry.
+      // Periodic storage refresh will retry.
     }
   }
 
@@ -751,6 +782,8 @@ export default function AudiobooksPage() {
       setJobs((current) =>
         current.filter((job) => job.id !== jobId),
       );
+
+      await refreshStorageAfterCleanup();
 
       setMessage("Audiobook files deleted.");
     } catch (caughtError) {
@@ -845,6 +878,116 @@ export default function AudiobooksPage() {
               would cross it.
             </p>
           </div>
+        )}
+
+        {storageSummary && (
+          <section className="mt-5 rounded-xl border border-slate-800 bg-slate-900 p-5">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h2 className="font-semibold">
+                  OpenBook audiobook storage
+                </h2>
+
+                <p className="mt-1 text-sm leading-6 text-slate-400">
+                  Verified generated audio across{" "}
+                  {storageSummary.job_count.toLocaleString()} audiobook{" "}
+                  {storageSummary.job_count === 1 ? "job" : "jobs"}.
+                </p>
+              </div>
+
+              <div className="text-right">
+                <p className="text-xs uppercase tracking-wide text-slate-500">
+                  Total audio
+                </p>
+
+                <p className="mt-1 text-xl font-bold text-white">
+                  {formatFileSize(
+                    storageSummary.total_bytes,
+                  )}
+                </p>
+              </div>
+            </div>
+
+            <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-3">
+              <div className="rounded-lg bg-slate-950 p-3">
+                <dt className="text-slate-400">
+                  WAV masters
+                </dt>
+                <dd className="mt-1 font-semibold text-white">
+                  {formatFileSize(
+                    storageSummary.wav_bytes,
+                  )}{" "}
+                  <span className="font-normal text-slate-500">
+                    ({storageSummary.wav_count})
+                  </span>
+                </dd>
+              </div>
+
+              <div className="rounded-lg bg-slate-950 p-3">
+                <dt className="text-slate-400">
+                  MP3 exports
+                </dt>
+                <dd className="mt-1 font-semibold text-white">
+                  {formatFileSize(
+                    storageSummary.mp3_bytes,
+                  )}{" "}
+                  <span className="font-normal text-slate-500">
+                    ({storageSummary.mp3_count})
+                  </span>
+                </dd>
+              </div>
+
+              <div className="rounded-lg bg-slate-950 p-3">
+                <dt className="text-slate-400">
+                  M4B exports
+                </dt>
+                <dd className="mt-1 font-semibold text-white">
+                  {formatFileSize(
+                    storageSummary.m4b_bytes,
+                  )}{" "}
+                  <span className="font-normal text-slate-500">
+                    ({storageSummary.m4b_count})
+                  </span>
+                </dd>
+              </div>
+            </dl>
+
+            <div
+              className={`mt-4 rounded-lg border p-3 text-sm ${
+                storageSummary.reclaimable_wav_bytes > 0
+                  ? "border-amber-500/30 bg-amber-500/10 text-amber-100"
+                  : "border-slate-700 bg-slate-950 text-slate-400"
+              }`}
+            >
+              {storageSummary.reclaimable_wav_bytes > 0 ? (
+                <>
+                  <span className="font-semibold">
+                    Safely reclaimable WAV space:{" "}
+                    {formatFileSize(
+                      storageSummary.reclaimable_wav_bytes,
+                    )}
+                  </span>
+                  {" · "}
+                  {storageSummary.reclaimable_wav_count}{" "}
+                  {storageSummary.reclaimable_wav_count === 1
+                    ? "master"
+                    : "masters"}{" "}
+                  already have a verified MP3 or M4B copy.
+                </>
+              ) : (
+                <>
+                  No WAV masters are currently marked safely
+                  reclaimable. Keep a compressed copy before deleting
+                  a WAV master.
+                </>
+              )}
+            </div>
+
+            <p className="mt-3 text-xs leading-5 text-slate-500">
+              Informational only. Use each job&apos;s Storage cleanup
+              controls to choose exactly what to remove.
+            </p>
+          </section>
         )}
 
         <section className="mt-10 grid gap-6 lg:grid-cols-[320px_1fr]">
