@@ -126,6 +126,10 @@ export default function AudiobooksPage() {
   const [speed, setSpeed] = useState(1);
   const [voices, setVoices] = useState<VoiceOption[]>([]);
   const [voice, setVoice] = useState("");
+  const [previewingVoice, setPreviewingVoice] = useState(false);
+  const [voicePreviewUrl, setVoicePreviewUrl] =
+    useState<string | null>(null);
+  const voicePreviewUrlRef = useRef<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [exportingMp3Id, setExportingMp3Id] =
@@ -147,6 +151,16 @@ export default function AudiobooksPage() {
       job.status === "queued" ||
       job.status === "running",
   );
+
+  useEffect(() => {
+    return () => {
+      if (voicePreviewUrlRef.current) {
+        URL.revokeObjectURL(
+          voicePreviewUrlRef.current,
+        );
+      }
+    };
+  }, []);
 
   const loadJobs = useCallback(async (): Promise<void> => {
     if (!bookId) {
@@ -215,6 +229,81 @@ export default function AudiobooksPage() {
 
     return () => window.clearInterval(interval);
   }, [bookId, loadJobs]);
+
+  function clearVoicePreview(): void {
+    if (voicePreviewUrlRef.current) {
+      URL.revokeObjectURL(
+        voicePreviewUrlRef.current,
+      );
+
+      voicePreviewUrlRef.current = null;
+    }
+
+    setVoicePreviewUrl(null);
+  }
+
+  async function previewNarrator(): Promise<void> {
+    if (!voice) {
+      return;
+    }
+
+    setPreviewingVoice(true);
+    clearMessages();
+
+    try {
+      const response = await fetch(
+        `${API_URL}/tts/voice-preview`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            text:
+              "Welcome to OpenBook AI. "
+              + "This is a preview of the selected narrator voice.",
+            speed,
+            voice,
+          }),
+        },
+      );
+
+      if (!response.ok) {
+        let data: ErrorResponse = {};
+
+        try {
+          data = (await response.json()) as ErrorResponse;
+        } catch {
+          data = {};
+        }
+
+        throw new Error(
+          getErrorMessage(
+            data,
+            response.status,
+          ),
+        );
+      }
+
+      const audioBlob = await response.blob();
+
+      clearVoicePreview();
+
+      const nextUrl = URL.createObjectURL(
+        audioBlob,
+      );
+
+      voicePreviewUrlRef.current = nextUrl;
+      setVoicePreviewUrl(nextUrl);
+    } catch (caughtError) {
+      showError(
+        caughtError,
+        "The narrator preview could not be generated.",
+      );
+    } finally {
+      setPreviewingVoice(false);
+    }
+  }
 
   async function createAudiobook(): Promise<void> {
     if (!bookId) {
@@ -511,6 +600,7 @@ export default function AudiobooksPage() {
                         id="voice"
                         onChange={(event) => {
                           setVoice(event.target.value);
+                          clearVoicePreview();
                           clearMessages();
                         }}
                         value={voice}
@@ -528,6 +618,30 @@ export default function AudiobooksPage() {
                       <p className="mt-2 text-xs text-slate-500">
                         Local Piper voice · saved with this audiobook job
                       </p>
+
+                      <button
+                        className="mt-3 w-full rounded-lg border border-cyan-500/50 px-4 py-2 text-sm font-semibold text-cyan-200 disabled:opacity-50"
+                        disabled={
+                          !voice || previewingVoice
+                        }
+                        onClick={() =>
+                          void previewNarrator()
+                        }
+                        type="button"
+                      >
+                        {previewingVoice
+                          ? "Generating preview..."
+                          : "Preview narrator"}
+                      </button>
+
+                      {voicePreviewUrl && (
+                        <audio
+                          className="mt-3 w-full"
+                          controls
+                          preload="metadata"
+                          src={voicePreviewUrl}
+                        />
+                      )}
                     </>
                   )}
                 </div>

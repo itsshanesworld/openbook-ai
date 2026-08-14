@@ -61,6 +61,31 @@ class TtsPreviewRequest(BaseModel):
         le=1.5,
     )
 
+    voice: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=120,
+    )
+
+    @field_validator("voice")
+    @classmethod
+    def normalize_preview_voice(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        """Normalize an optional preview narrator."""
+        if value is None:
+            return None
+
+        cleaned = value.strip()
+
+        if not cleaned:
+            raise ValueError(
+                "Narrator voice cannot be blank."
+            )
+
+        return cleaned
+
     @field_validator("text")
     @classmethod
     def reject_blank_preview_text(
