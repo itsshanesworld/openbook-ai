@@ -27,6 +27,18 @@ interface StorageStatus {
   critical: boolean;
 }
 
+interface GenerationEstimate {
+  book_id: number;
+  speed: number;
+  total_words: number;
+  estimated_output_bytes: number;
+  free_bytes: number;
+  reserve_bytes: number;
+  required_free_bytes: number;
+  projected_free_bytes: number;
+  safe: boolean;
+}
+
 interface VoiceOption {
   id: string;
   name: string;
@@ -201,6 +213,10 @@ export default function AudiobooksPage() {
   const [voice, setVoice] = useState("");
   const [storageStatus, setStorageStatus] =
     useState<StorageStatus | null>(null);
+  const [generationEstimate, setGenerationEstimate] =
+    useState<GenerationEstimate | null>(null);
+  const [estimateLoading, setEstimateLoading] =
+    useState(false);
   const [previewingVoice, setPreviewingVoice] = useState(false);
   const [voicePreviewUrl, setVoicePreviewUrl] =
     useState<string | null>(null);
@@ -267,6 +283,54 @@ export default function AudiobooksPage() {
       window.clearInterval(timer);
     };
   }, []);
+
+  useEffect(() => {
+    if (!bookId) {
+      setGenerationEstimate(null);
+      setEstimateLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    setEstimateLoading(true);
+
+    const timer = window.setTimeout(() => {
+      async function loadGenerationEstimate(): Promise<void> {
+        try {
+          const estimate =
+            await requestJson<GenerationEstimate>(
+              `${API_URL}/books/${bookId}/audiobook-estimate?speed=${encodeURIComponent(
+                String(speed),
+              )}`,
+            );
+
+          if (!cancelled) {
+            setGenerationEstimate(estimate);
+          }
+        } catch {
+          if (!cancelled) {
+            setGenerationEstimate(null);
+          }
+        } finally {
+          if (!cancelled) {
+            setEstimateLoading(false);
+          }
+        }
+      }
+
+      void loadGenerationEstimate();
+    }, 150);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [
+    bookId,
+    speed,
+    storageStatus?.free_bytes,
+  ]);
 
   const loadJobs = useCallback(async (): Promise<void> => {
     if (!bookId) {
@@ -932,10 +996,108 @@ export default function AudiobooksPage() {
                   />
                 </div>
 
+                <div
+                  className={`mt-5 rounded-xl border p-4 text-sm ${
+                    generationEstimate?.safe === false
+                      ? "border-red-500/40 bg-red-500/10"
+                      : "border-slate-700 bg-slate-950"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-semibold">
+                      Pre-generation storage estimate
+                    </p>
+
+                    {generationEstimate && (
+                      <span
+                        className={
+                          generationEstimate.safe
+                            ? "text-emerald-300"
+                            : "text-red-300"
+                        }
+                      >
+                        {generationEstimate.safe
+                          ? "Safe to generate"
+                          : "Not enough storage"}
+                      </span>
+                    )}
+                  </div>
+
+                  {estimateLoading ? (
+                    <p className="mt-3 text-slate-400">
+                      Calculating from narration sections...
+                    </p>
+                  ) : generationEstimate ? (
+                    <>
+                      <dl className="mt-4 space-y-2 text-slate-300">
+                        <div className="flex justify-between gap-4">
+                          <dt>Estimated WAV</dt>
+                          <dd className="font-semibold text-white">
+                            {formatFileSize(
+                              generationEstimate.estimated_output_bytes,
+                            )}
+                          </dd>
+                        </div>
+
+                        <div className="flex justify-between gap-4">
+                          <dt>Free now</dt>
+                          <dd>
+                            {formatFileSize(
+                              generationEstimate.free_bytes,
+                            )}
+                          </dd>
+                        </div>
+
+                        <div className="flex justify-between gap-4">
+                          <dt>Protected reserve</dt>
+                          <dd>
+                            {formatFileSize(
+                              generationEstimate.reserve_bytes,
+                            )}
+                          </dd>
+                        </div>
+
+                        <div className="flex justify-between gap-4">
+                          <dt>Projected free after WAV</dt>
+                          <dd>
+                            {formatFileSize(
+                              generationEstimate.projected_free_bytes,
+                            )}
+                          </dd>
+                        </div>
+                      </dl>
+
+                      <p className="mt-3 text-xs leading-5 text-slate-400">
+                        Estimate uses{" "}
+                        {generationEstimate.total_words.toLocaleString()}{" "}
+                        narration words at {speed.toFixed(2)}×.
+                      </p>
+
+                      {!generationEstimate.safe && (
+                        <p className="mt-2 text-xs leading-5 text-red-200">
+                          About{" "}
+                          {formatFileSize(
+                            generationEstimate.required_free_bytes,
+                          )}{" "}
+                          free is required including the protected
+                          reserve.
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <p className="mt-3 text-slate-400">
+                      Storage estimate is temporarily unavailable.
+                      The backend safety check will still protect
+                      generation.
+                    </p>
+                  )}
+                </div>
+
                 <button
                   className="mt-7 w-full rounded-lg bg-white px-5 py-3 font-semibold text-slate-950 disabled:opacity-50"
                   disabled={
                     storageStatus?.critical ||
+                    generationEstimate?.safe === false ||
                     !bookId ||
                     !voice ||
                     creating ||

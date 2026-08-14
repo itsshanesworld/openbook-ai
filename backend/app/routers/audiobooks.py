@@ -8,6 +8,7 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     HTTPException,
+    Query,
 )
 from fastapi.responses import FileResponse
 from sqlmodel import Session, select
@@ -16,6 +17,7 @@ from app.audiobook_service import (
     delete_job_output,
     get_book_sections,
     ensure_available_disk_space,
+    estimate_output_size_bytes,
     run_audiobook_job,
 )
 from app.cover_service import get_cover_info, get_cover_path
@@ -40,7 +42,10 @@ from app.m4b_service import (
 )
 from app.models import AudiobookJob, Book
 from app.schemas import AudiobookCreateRequest
-from app.storage_service import get_storage_status
+from app.storage_service import (
+    get_storage_capacity_estimate,
+    get_storage_status,
+)
 from app.tts_service import (
     TtsUnavailableError,
     get_default_voice_name,
@@ -61,6 +66,93 @@ DatabaseSession = Annotated[
 def storage_status() -> dict[str, int | bool]:
     """Return current Linux storage safety information."""
     return get_storage_status()
+
+
+@router.get("/books/{book_id}/audiobook-estimate")
+def get_audiobook_storage_estimate(
+    book_id: int,
+    session: DatabaseSession,
+    speed: Annotated[
+        float,
+        Query(
+            ge=0.75,
+            le=1.5,
+        ),
+    ] = 1.0,
+) -> dict[str, int | float | bool]:
+    """Estimate WAV storage requirements before generation."""
+    book = session.get(
+        Book,
+        book_id,
+    )
+
+    if book is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Book not found.",
+        )
+
+    sections = get_book_sections(
+        session,
+        book_id,
+    )
+
+    if not sections:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "This book has no narration sections. "
+                "Create narration sections first."
+            ),
+        )
+
+    total_words = sum(
+        section.word_count
+        for section in sections
+    )
+
+    estimated_output_bytes = (
+        estimate_output_size_bytes(
+            total_words,
+            speed,
+        )
+    )
+
+    capacity = (
+        get_storage_capacity_estimate(
+            estimated_output_bytes
+        )
+    )
+
+    return {
+        "book_id": book_id,
+        "speed": speed,
+        "total_words": total_words,
+        "estimated_output_bytes": int(
+            capacity[
+                "estimated_output_bytes"
+            ]
+        ),
+        "free_bytes": int(
+            capacity["free_bytes"]
+        ),
+        "reserve_bytes": int(
+            capacity["reserve_bytes"]
+        ),
+        "required_free_bytes": int(
+            capacity[
+                "required_free_bytes"
+            ]
+        ),
+        "projected_free_bytes": int(
+            capacity[
+                "projected_free_bytes"
+            ]
+        ),
+        "safe": bool(
+            capacity["safe"]
+        ),
+    }
 
 
 @router.get("/tts/voices")

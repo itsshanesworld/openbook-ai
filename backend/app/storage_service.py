@@ -40,12 +40,10 @@ def get_storage_status() -> dict[str, int | bool]:
     }
 
 
-def ensure_storage_capacity(
+def get_storage_capacity_estimate(
     estimated_output_bytes: int,
-    *,
-    operation: str,
-) -> None:
-    """Ensure an operation leaves the protected free-space reserve."""
+) -> dict[str, int | bool]:
+    """Return storage safety information for a proposed output."""
     estimated_output_bytes = max(
         int(estimated_output_bytes),
         0,
@@ -57,24 +55,69 @@ def ensure_storage_capacity(
         status["free_bytes"]
     )
 
-    required_free_bytes = (
-        estimated_output_bytes
-        + RESERVE_FREE_SPACE_BYTES
+    reserve_bytes = int(
+        status["reserve_bytes"]
     )
 
-    if free_bytes >= required_free_bytes:
+    required_free_bytes = (
+        estimated_output_bytes
+        + reserve_bytes
+    )
+
+    projected_free_bytes = max(
+        free_bytes
+        - estimated_output_bytes,
+        0,
+    )
+
+    return {
+        **status,
+        "estimated_output_bytes": estimated_output_bytes,
+        "required_free_bytes": required_free_bytes,
+        "projected_free_bytes": projected_free_bytes,
+        "safe": free_bytes >= required_free_bytes,
+    }
+
+
+def ensure_storage_capacity(
+    estimated_output_bytes: int,
+    *,
+    operation: str,
+) -> None:
+    """Ensure an operation leaves the protected free-space reserve."""
+    capacity = get_storage_capacity_estimate(
+        estimated_output_bytes
+    )
+
+    if bool(capacity["safe"]):
         return
+
+    free_bytes = int(
+        capacity["free_bytes"]
+    )
+
+    output_bytes = int(
+        capacity["estimated_output_bytes"]
+    )
+
+    reserve_bytes = int(
+        capacity["reserve_bytes"]
+    )
+
+    required_free_bytes = int(
+        capacity["required_free_bytes"]
+    )
 
     free_mb = bytes_to_megabytes(
         free_bytes
     )
 
     output_mb = bytes_to_megabytes(
-        estimated_output_bytes
+        output_bytes
     )
 
     reserve_mb = bytes_to_megabytes(
-        RESERVE_FREE_SPACE_BYTES
+        reserve_bytes
     )
 
     required_mb = bytes_to_megabytes(
