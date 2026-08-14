@@ -33,6 +33,8 @@ interface GenerationEstimate {
   total_words: number;
   estimated_duration_seconds: number;
   estimated_output_bytes: number;
+  estimated_mp3_bytes: number;
+  estimated_m4b_bytes: number;
   free_bytes: number;
   reserve_bytes: number;
   required_free_bytes: number;
@@ -1093,6 +1095,24 @@ export default function AudiobooksPage() {
                         </div>
 
                         <div className="flex justify-between gap-4">
+                          <dt>Estimated MP3 (64 kbps)</dt>
+                          <dd>
+                            {formatFileSize(
+                              generationEstimate.estimated_mp3_bytes,
+                            )}
+                          </dd>
+                        </div>
+
+                        <div className="flex justify-between gap-4">
+                          <dt>Estimated M4B (64 kbps)</dt>
+                          <dd>
+                            {formatFileSize(
+                              generationEstimate.estimated_m4b_bytes,
+                            )}
+                          </dd>
+                        </div>
+
+                        <div className="flex justify-between gap-4">
                           <dt>Free now</dt>
                           <dd>
                             {formatFileSize(
@@ -1119,6 +1139,13 @@ export default function AudiobooksPage() {
                           </dd>
                         </div>
                       </dl>
+
+                      <p className="mt-3 text-xs leading-5 text-slate-400">
+                        MP3 and M4B estimates use the same 64 kbps
+                        setting as the exporters, plus a small
+                        container margin. Cover artwork and metadata
+                        can make final files slightly larger.
+                      </p>
 
                       <p className="mt-3 text-xs leading-5 text-slate-400">
                         Estimate uses{" "}

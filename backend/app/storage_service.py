@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import shutil
+import math
+import wave
 from pathlib import Path
 
 BACKEND_DIRECTORY = Path(__file__).resolve().parent.parent
@@ -12,6 +14,9 @@ WARNING_FREE_SPACE_BYTES = 1024 * 1024 * 1024
 RESERVE_FREE_SPACE_BYTES = 256 * 1024 * 1024
 
 MINIMUM_COMPRESSED_EXPORT_BYTES = 2 * 1024 * 1024
+
+COMPRESSED_AUDIO_BITRATE_BITS_PER_SECOND = 64_000
+COMPRESSED_EXPORT_OVERHEAD_MULTIPLIER = 1.05
 
 STORAGE_DIRECTORY.mkdir(
     parents=True,
@@ -134,15 +139,69 @@ def ensure_storage_capacity(
     )
 
 
+def estimate_compressed_audio_size_bytes(
+    duration_seconds: float,
+) -> int:
+    """Estimate a 64 kbps compressed audio file."""
+    if duration_seconds < 0:
+        raise ValueError(
+            "Audio duration cannot be negative."
+        )
+
+    audio_bytes = (
+        duration_seconds
+        * COMPRESSED_AUDIO_BITRATE_BITS_PER_SECOND
+        / 8
+    )
+
+    estimated_bytes = math.ceil(
+        audio_bytes
+        * COMPRESSED_EXPORT_OVERHEAD_MULTIPLIER
+    )
+
+    return max(
+        MINIMUM_COMPRESSED_EXPORT_BYTES,
+        estimated_bytes,
+    )
+
+
 def estimate_compressed_export_size(
     source_path: Path,
 ) -> int:
     """Estimate a 64 kbps compressed export from a WAV source."""
-    source_size = source_path.stat().st_size
+    try:
+        with wave.open(
+            str(source_path),
+            "rb",
+        ) as source_wav:
+            frame_rate = source_wav.getframerate()
 
-    return max(
-        MINIMUM_COMPRESSED_EXPORT_BYTES,
-        source_size // 10,
+            if frame_rate <= 0:
+                raise ValueError(
+                    "The WAV sample rate is invalid."
+                )
+
+            duration_seconds = (
+                source_wav.getnframes()
+                / frame_rate
+            )
+    except (
+        EOFError,
+        OSError,
+        ValueError,
+        wave.Error,
+    ):
+        source_size = source_path.stat().st_size
+
+        return max(
+            MINIMUM_COMPRESSED_EXPORT_BYTES,
+            math.ceil(
+                source_size / 5
+            ),
+        )
+
+    return estimate_compressed_audio_size_bytes(
+        duration_seconds
     )
 
 

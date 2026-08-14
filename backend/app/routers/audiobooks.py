@@ -44,6 +44,7 @@ from app.m4b_service import (
 from app.models import AudiobookJob, Book
 from app.schemas import AudiobookCreateRequest
 from app.storage_service import (
+    estimate_compressed_audio_size_bytes,
     get_storage_capacity_estimate,
     get_storage_status,
 )
@@ -81,7 +82,7 @@ def get_audiobook_storage_estimate(
         ),
     ] = 1.0,
 ) -> dict[str, int | float | bool]:
-    """Estimate WAV storage requirements before generation."""
+    """Estimate audiobook duration and storage before generation."""
     book = session.get(
         Book,
         book_id,
@@ -126,6 +127,12 @@ def get_audiobook_storage_estimate(
         )
     )
 
+    estimated_compressed_bytes = (
+        estimate_compressed_audio_size_bytes(
+            estimated_duration_seconds
+        )
+    )
+
     capacity = (
         get_storage_capacity_estimate(
             estimated_output_bytes
@@ -139,6 +146,8 @@ def get_audiobook_storage_estimate(
         "estimated_duration_seconds": round(
             estimated_duration_seconds
         ),
+        "estimated_mp3_bytes": estimated_compressed_bytes,
+        "estimated_m4b_bytes": estimated_compressed_bytes,
         "estimated_output_bytes": int(
             capacity[
                 "estimated_output_bytes"
