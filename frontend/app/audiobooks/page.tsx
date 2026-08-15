@@ -48,6 +48,9 @@ interface GenerationEstimate {
   estimated_output_bytes: number;
   estimated_mp3_bytes: number;
   estimated_m4b_bytes: number;
+  mp3_required_free_bytes: number;
+  mp3_projected_free_bytes: number;
+  mp3_safe: boolean;
   free_bytes: number;
   reserve_bytes: number;
   required_free_bytes: number;
@@ -546,7 +549,9 @@ export default function AudiobooksPage() {
     }
   }
 
-  async function createAudiobook(): Promise<void> {
+  async function createAudiobook(
+    outputFormat: "wav" | "mp3" = "wav",
+  ): Promise<void> {
     if (!bookId) {
       return;
     }
@@ -565,19 +570,34 @@ export default function AudiobooksPage() {
           body: JSON.stringify({
             speed,
             voice,
+            output_format: outputFormat,
           }),
         },
       );
 
-      setJobs((current) => [job, ...current]);
+      setJobs((current) => [
+        job,
+        ...current,
+      ]);
 
-      setMessage(
-        "WAV audiobook generation started. Keep OpenBook AI running.",
-      );
+      if (outputFormat === "mp3") {
+        setMessage(
+          "Storage-efficient MP3 generation started. "
+          + "OpenBook AI will stream narration directly into MP3 "
+          + "without storing a combined WAV.",
+        );
+      } else {
+        setMessage(
+          "WAV audiobook generation started. "
+          + "Keep OpenBook AI running.",
+        );
+      }
     } catch (caughtError) {
       showError(
         caughtError,
-        "Audiobook generation could not start.",
+        outputFormat === "mp3"
+          ? "Direct MP3 generation could not start."
+          : "Audiobook generation could not start.",
       );
     } finally {
       setCreating(false);
@@ -1335,9 +1355,9 @@ export default function AudiobooksPage() {
                     </span>
 
                     <span className="mt-1 block text-xs leading-5 text-slate-400">
-                      Applies to MP3 and M4B exports below. Off by
-                      default. OpenBook AI verifies the compressed
-                      file before removing the WAV master.
+                      Applies when creating MP3 or M4B from an
+                      existing WAV job. Off by default. Direct MP3
+                      generation below never creates a WAV master.
                     </span>
 
                     <span className="mt-2 block text-xs leading-5 text-amber-300">
@@ -1367,6 +1387,58 @@ export default function AudiobooksPage() {
                       ? "Generation in progress"
                       : "Generate WAV audiobook"}
                 </button>
+
+                <button
+                  className="mt-3 w-full rounded-lg bg-cyan-400 px-5 py-3 font-semibold text-slate-950 disabled:opacity-50"
+                  disabled={
+                    storageStatus?.critical ||
+                    generationEstimate?.mp3_safe === false ||
+                    !bookId ||
+                    !voice ||
+                    creating ||
+                    activeJob
+                  }
+                  onClick={() =>
+                    void createAudiobook("mp3")
+                  }
+                  type="button"
+                >
+                  {creating
+                    ? "Starting..."
+                    : activeJob
+                      ? "Generation in progress"
+                      : "Generate MP3 directly"}
+                </button>
+
+                <div className="mt-3 rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3 text-xs leading-5 text-slate-400">
+                  <p>
+                    Direct MP3 skips the full WAV master and streams
+                    each narration section into a 64 kbps MP3.
+                  </p>
+
+                  {generationEstimate && (
+                    <p className="mt-2">
+                      Estimated MP3:{" "}
+                      <span className="font-semibold text-white">
+                        {formatFileSize(
+                          generationEstimate.estimated_mp3_bytes,
+                        )}
+                      </span>
+                      {" · "}
+                      Projected free storage:{" "}
+                      <span className="font-semibold text-white">
+                        {formatFileSize(
+                          generationEstimate.mp3_projected_free_bytes,
+                        )}
+                      </span>
+                    </p>
+                  )}
+
+                  <p className="mt-2 text-amber-300">
+                    No WAV master is stored. To create an M4B from
+                    this job later, generate a WAV audiobook first.
+                  </p>
+                </div>
               </>
             )}
           </aside>
@@ -1501,7 +1573,7 @@ export default function AudiobooksPage() {
                           </>
                         ) : (
                           <p className="mt-3 text-sm text-slate-400">
-                            WAV master removed to save storage.
+                            WAV master is not stored for this job.
                           </p>
                         )}
                       </div>

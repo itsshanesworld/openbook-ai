@@ -22,10 +22,15 @@ from app.audiobook_service import (
     run_audiobook_job,
 )
 from app.cover_service import get_cover_info, get_cover_path
+from app.direct_mp3_service import (
+    ensure_direct_mp3_disk_space,
+    run_direct_mp3_job,
+)
 from app.database import get_session
 from app.metadata_service import resolve_book_metadata
 from app.export_service import (
     ExportError,
+    get_ffmpeg_status,
     create_mp3_export as build_mp3_export,
     delete_mp3_export,
     get_mp3_export_info,
@@ -149,6 +154,12 @@ def get_audiobook_storage_estimate(
         )
     )
 
+    mp3_capacity = (
+        get_storage_capacity_estimate(
+            estimated_compressed_bytes
+        )
+    )
+
     return {
         "book_id": book_id,
         "speed": speed,
@@ -158,6 +169,19 @@ def get_audiobook_storage_estimate(
         ),
         "estimated_mp3_bytes": estimated_compressed_bytes,
         "estimated_m4b_bytes": estimated_compressed_bytes,
+        "mp3_required_free_bytes": int(
+            mp3_capacity[
+                "required_free_bytes"
+            ]
+        ),
+        "mp3_projected_free_bytes": int(
+            mp3_capacity[
+                "projected_free_bytes"
+            ]
+        ),
+        "mp3_safe": bool(
+            mp3_capacity["safe"]
+        ),
         "estimated_output_bytes": int(
             capacity[
                 "estimated_output_bytes"
@@ -204,7 +228,7 @@ def create_audiobook_job(
     background_tasks: BackgroundTasks,
     session: DatabaseSession,
 ) -> dict[str, object]:
-    """Create a complete WAV audiobook generation job."""
+    """Create a WAV or storage-efficient MP3 audiobook job."""
     book = session.get(Book, book_id)
 
     if book is None:
@@ -244,14 +268,36 @@ def create_audiobook_job(
             detail="The selected local Piper voice is unavailable.",
         )
 
+    total_words = sum(
+        section.word_count
+        for section in sections
+    )
+
+    if request.output_format == "mp3":
+        ffmpeg_status = get_ffmpeg_status()
+
+        if not bool(
+            ffmpeg_status["available"]
+        ):
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "FFmpeg is required for direct "
+                    "MP3 generation."
+                ),
+            )
+
     try:
-        ensure_available_disk_space(
-            total_words=sum(
-                section.word_count
-                for section in sections
-            ),
-            speed=request.speed,
-        )
+        if request.output_format == "mp3":
+            ensure_direct_mp3_disk_space(
+                total_words=total_words,
+                speed=request.speed,
+            )
+        else:
+            ensure_available_disk_space(
+                total_words=total_words,
+                speed=request.speed,
+            )
     except RuntimeError as error:
         raise HTTPException(
             status_code=422,
@@ -292,8 +338,14 @@ def create_audiobook_job(
             detail="The audiobook job could not be created.",
         )
 
+    job_runner = (
+        run_direct_mp3_job
+        if request.output_format == "mp3"
+        else run_audiobook_job
+    )
+
     background_tasks.add_task(
-        run_audiobook_job,
+        job_runner,
         job.id,
     )
 

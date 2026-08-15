@@ -107,6 +107,8 @@ class TtsPreviewRequest(BaseModel):
 class AudiobookCreateRequest(BaseModel):
     """Complete-audiobook generation settings."""
 
+    output_format: Literal["wav", "mp3"] = "wav"
+
     speed: float = Field(
         default=1.0,
         ge=0.75,
