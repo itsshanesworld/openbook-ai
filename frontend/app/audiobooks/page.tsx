@@ -51,6 +51,9 @@ interface GenerationEstimate {
   mp3_required_free_bytes: number;
   mp3_projected_free_bytes: number;
   mp3_safe: boolean;
+  m4b_required_free_bytes: number;
+  m4b_projected_free_bytes: number;
+  m4b_safe: boolean;
   free_bytes: number;
   reserve_bytes: number;
   required_free_bytes: number;
@@ -550,7 +553,7 @@ export default function AudiobooksPage() {
   }
 
   async function createAudiobook(
-    outputFormat: "wav" | "mp3" = "wav",
+    outputFormat: "wav" | "mp3" | "m4b" = "wav",
   ): Promise<void> {
     if (!bookId) {
       return;
@@ -580,7 +583,13 @@ export default function AudiobooksPage() {
         ...current,
       ]);
 
-      if (outputFormat === "mp3") {
+      if (outputFormat === "m4b") {
+        setMessage(
+          "Storage-efficient M4B generation started. "
+          + "OpenBook AI will stream narration into AAC and build "
+          + "the chaptered M4B without storing a combined WAV.",
+        );
+      } else if (outputFormat === "mp3") {
         setMessage(
           "Storage-efficient MP3 generation started. "
           + "OpenBook AI will stream narration directly into MP3 "
@@ -595,9 +604,11 @@ export default function AudiobooksPage() {
     } catch (caughtError) {
       showError(
         caughtError,
-        outputFormat === "mp3"
-          ? "Direct MP3 generation could not start."
-          : "Audiobook generation could not start.",
+        outputFormat === "m4b"
+          ? "Direct M4B generation could not start."
+          : outputFormat === "mp3"
+            ? "Direct MP3 generation could not start."
+            : "Audiobook generation could not start.",
       );
     } finally {
       setCreating(false);
@@ -1435,8 +1446,62 @@ export default function AudiobooksPage() {
                   )}
 
                   <p className="mt-2 text-amber-300">
-                    No WAV master is stored. To create an M4B from
-                    this job later, generate a WAV audiobook first.
+                    No WAV master is stored. Choose direct M4B below
+                    when you want a chaptered M4B audiobook.
+                  </p>
+                </div>
+
+                <button
+                  className="mt-3 w-full rounded-lg bg-violet-400 px-5 py-3 font-semibold text-slate-950 disabled:opacity-50"
+                  disabled={
+                    storageStatus?.critical ||
+                    generationEstimate?.m4b_safe === false ||
+                    !bookId ||
+                    !voice ||
+                    creating ||
+                    activeJob
+                  }
+                  onClick={() =>
+                    void createAudiobook("m4b")
+                  }
+                  type="button"
+                >
+                  {creating
+                    ? "Starting..."
+                    : activeJob
+                      ? "Generation in progress"
+                      : "Generate M4B directly"}
+                </button>
+
+                <div className="mt-3 rounded-lg border border-violet-500/20 bg-violet-500/5 p-3 text-xs leading-5 text-slate-400">
+                  <p>
+                    Direct M4B streams narration into 64 kbps AAC,
+                    then adds OpenBook AI chapter timestamps,
+                    metadata, narrator information, and cover art.
+                    No full WAV master is stored.
+                  </p>
+
+                  {generationEstimate && (
+                    <p className="mt-2">
+                      Estimated M4B:{" "}
+                      <span className="font-semibold text-white">
+                        {formatFileSize(
+                          generationEstimate.estimated_m4b_bytes,
+                        )}
+                      </span>
+                      {" · "}
+                      Projected free storage:{" "}
+                      <span className="font-semibold text-white">
+                        {formatFileSize(
+                          generationEstimate.m4b_projected_free_bytes,
+                        )}
+                      </span>
+                    </p>
+                  )}
+
+                  <p className="mt-2 text-violet-300">
+                    Best choice when you want one compact audiobook
+                    file with chapter navigation.
                   </p>
                 </div>
               </>

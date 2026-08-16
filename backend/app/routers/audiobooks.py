@@ -26,6 +26,10 @@ from app.direct_mp3_service import (
     ensure_direct_mp3_disk_space,
     run_direct_mp3_job,
 )
+from app.direct_m4b_service import (
+    ensure_direct_m4b_disk_space,
+    run_direct_m4b_job,
+)
 from app.database import get_session
 from app.metadata_service import resolve_book_metadata
 from app.export_service import (
@@ -182,6 +186,19 @@ def get_audiobook_storage_estimate(
         "mp3_safe": bool(
             mp3_capacity["safe"]
         ),
+        "m4b_required_free_bytes": int(
+            mp3_capacity[
+                "required_free_bytes"
+            ]
+        ),
+        "m4b_projected_free_bytes": int(
+            mp3_capacity[
+                "projected_free_bytes"
+            ]
+        ),
+        "m4b_safe": bool(
+            mp3_capacity["safe"]
+        ),
         "estimated_output_bytes": int(
             capacity[
                 "estimated_output_bytes"
@@ -228,7 +245,7 @@ def create_audiobook_job(
     background_tasks: BackgroundTasks,
     session: DatabaseSession,
 ) -> dict[str, object]:
-    """Create a WAV or storage-efficient MP3 audiobook job."""
+    """Create a WAV, direct MP3, or direct M4B audiobook job."""
     book = session.get(Book, book_id)
 
     if book is None:
@@ -273,7 +290,10 @@ def create_audiobook_job(
         for section in sections
     )
 
-    if request.output_format == "mp3":
+    if request.output_format in {
+        "mp3",
+        "m4b",
+    }:
         ffmpeg_status = get_ffmpeg_status()
 
         if not bool(
@@ -283,13 +303,18 @@ def create_audiobook_job(
                 status_code=503,
                 detail=(
                     "FFmpeg is required for direct "
-                    "MP3 generation."
+                    f"{request.output_format.upper()} generation."
                 ),
             )
 
     try:
         if request.output_format == "mp3":
             ensure_direct_mp3_disk_space(
+                total_words=total_words,
+                speed=request.speed,
+            )
+        elif request.output_format == "m4b":
+            ensure_direct_m4b_disk_space(
                 total_words=total_words,
                 speed=request.speed,
             )
@@ -338,11 +363,15 @@ def create_audiobook_job(
             detail="The audiobook job could not be created.",
         )
 
-    job_runner = (
-        run_direct_mp3_job
-        if request.output_format == "mp3"
-        else run_audiobook_job
-    )
+    job_runners = {
+        "wav": run_audiobook_job,
+        "mp3": run_direct_mp3_job,
+        "m4b": run_direct_m4b_job,
+    }
+
+    job_runner = job_runners[
+        request.output_format
+    ]
 
     background_tasks.add_task(
         job_runner,
