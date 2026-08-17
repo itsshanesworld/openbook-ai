@@ -106,7 +106,7 @@ interface AudiobookJob {
   book_title: string;
   book_author: string | null;
   cover: CoverInfo;
-  status: "queued" | "running" | "completed" | "failed";
+  status: "queued" | "running" | "cancelling" | "cancelled" | "completed" | "failed";
   speed: number;
   voice: string;
   total_sections: number;
@@ -262,6 +262,8 @@ export default function AudiobooksPage() {
     useState<number | null>(null);
   const [deletingArtifact, setDeletingArtifact] =
     useState<string | null>(null);
+  const [cancellingJobId, setCancellingJobId] =
+    useState<number | null>(null);
 
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -274,7 +276,8 @@ export default function AudiobooksPage() {
   const activeJob = jobs.some(
     (job) =>
       job.status === "queued" ||
-      job.status === "running",
+      job.status === "running" ||
+      job.status === "cancelling",
   );
 
   useEffect(() => {
@@ -787,6 +790,45 @@ export default function AudiobooksPage() {
       );
     } finally {
       setDeletingArtifact(null);
+    }
+  }
+
+  async function cancelAudiobook(
+    jobId: number,
+  ): Promise<void> {
+    setCancellingJobId(jobId);
+    clearMessages();
+
+    try {
+      const updatedJob = await requestJson<AudiobookJob>(
+        `${API_URL}/audiobook-jobs/${jobId}/cancel`,
+        {
+          method: "POST",
+        },
+      );
+
+      setJobs((current) =>
+        current.map((job) =>
+          job.id === updatedJob.id ? updatedJob : job,
+        ),
+      );
+
+      if (updatedJob.status === "cancelled") {
+        setMessage(
+          "Audiobook generation cancelled.",
+        );
+      } else {
+        setMessage(
+          "Cancellation requested. OpenBook AI will stop safely after the current narration section.",
+        );
+      }
+    } catch (caughtError) {
+      showError(
+        caughtError,
+        "Audiobook generation could not be cancelled.",
+      );
+    } finally {
+      setCancellingJobId(null);
     }
   }
 
@@ -1597,6 +1639,41 @@ export default function AudiobooksPage() {
                     {job.progress_percent}% complete
                   </p>
 
+                  {(job.status === "queued" ||
+                    job.status === "running" ||
+                    job.status === "cancelling") && (
+                    <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4">
+                      <p className="text-sm leading-6 text-amber-100">
+                        {job.status === "cancelling"
+                          ? "Cancellation requested. OpenBook AI is finishing safe cleanup."
+                          : "Generation is currently active."}
+                      </p>
+
+                      <button
+                        className="mt-3 rounded-lg border border-amber-400/50 px-4 py-2 text-sm font-semibold text-amber-200 disabled:cursor-not-allowed disabled:opacity-40"
+                        disabled={
+                          cancellingJobId === job.id ||
+                          job.status === "cancelling"
+                        }
+                        onClick={() =>
+                          void cancelAudiobook(job.id)
+                        }
+                        type="button"
+                      >
+                        {cancellingJobId === job.id ||
+                        job.status === "cancelling"
+                          ? "Cancelling..."
+                          : "Cancel generation"}
+                      </button>
+                    </div>
+                  )}
+
+                  {job.status === "cancelled" && (
+                    <p className="mt-4 rounded-lg border border-slate-600 bg-slate-800/60 p-3 text-sm text-slate-300">
+                      Audiobook generation was cancelled safely.
+                    </p>
+                  )}
+
                   {job.error_message && (
                     <p className="mt-4 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">
                       {job.error_message}
@@ -1859,15 +1936,21 @@ export default function AudiobooksPage() {
                     </div>
                   )}
 
-                  {job.status === "failed" && (
+                  {(job.status === "failed" ||
+                    job.status === "cancelled") && (
                     <button
-                      className="mt-4 text-sm font-semibold text-red-300"
+                      className="mt-4 text-sm font-semibold text-red-300 disabled:opacity-50"
+                      disabled={deletingId === job.id}
                       onClick={() =>
                         void deleteJob(job.id)
                       }
                       type="button"
                     >
-                      Delete failed job
+                      {deletingId === job.id
+                        ? "Deleting..."
+                        : job.status === "cancelled"
+                          ? "Delete cancelled job"
+                          : "Delete failed job"}
                     </button>
                   )}
                 </article>
@@ -1999,6 +2082,8 @@ function StatusBadge({
   const classes = {
     queued: "bg-amber-500/15 text-amber-300",
     running: "bg-cyan-500/15 text-cyan-300",
+    cancelling: "bg-amber-500/15 text-amber-200",
+    cancelled: "bg-slate-500/15 text-slate-300",
     completed: "bg-emerald-500/15 text-emerald-300",
     failed: "bg-red-500/15 text-red-300",
   }[status];

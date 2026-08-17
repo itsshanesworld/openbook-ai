@@ -11,6 +11,10 @@ from pathlib import Path
 from sqlmodel import Session, select
 
 from app.database import engine
+from app.cancellation_service import (
+    AudiobookCancelled,
+    raise_if_audiobook_cancelled,
+)
 from app.metadata_service import resolve_book_metadata
 from app.models import (
     AudiobookJob,
@@ -35,6 +39,9 @@ TimingCallback = Callable[
     None,
 ]
 
+CancellationCallback = Callable[[], None]
+SynthesisFunction = Callable[..., bytes]
+
 
 def run_audiobook_job(job_id: int) -> None:
     """Generate and combine every narration section for one job."""
@@ -47,6 +54,10 @@ def run_audiobook_job(job_id: int) -> None:
             return
 
         try:
+            raise_if_audiobook_cancelled(
+                job_id
+            )
+
             delete_job_timings(session, job_id)
 
             job.status = "running"
@@ -122,6 +133,15 @@ def run_audiobook_job(job_id: int) -> None:
                     )
                 ),
                 voice_name=job.voice,
+                cancel_callback=(
+                    lambda: raise_if_audiobook_cancelled(
+                        job_id
+                    )
+                ),
+            )
+
+            raise_if_audiobook_cancelled(
+                job_id
             )
 
             job.status = "completed"
@@ -153,8 +173,22 @@ def run_audiobook_job(job_id: int) -> None:
             )
 
             if failed_job is not None:
-                failed_job.status = "failed"
+                cancelled = isinstance(
+                    error,
+                    AudiobookCancelled,
+                )
+
+                failed_job.status = (
+                    "cancelled"
+                    if cancelled
+                    else "failed"
+                )
                 failed_job.error_message = str(error)
+                if cancelled:
+                    failed_job.completed_sections = 0
+                    failed_job.output_size_bytes = None
+                    failed_job.error_message = None
+
                 failed_job.updated_at = utc_timestamp()
 
                 session.add(failed_job)
@@ -167,6 +201,9 @@ def generate_combined_wav(
     output_path: Path,
     timing_callback: TimingCallback,
     voice_name: str | None = None,
+    *,
+    cancel_callback: CancellationCallback | None = None,
+    synthesizer: SynthesisFunction = synthesize_wav,
 ) -> None:
     """Generate one WAV and record section timestamps."""
     temporary_path = get_temporary_output_path(
@@ -185,11 +222,17 @@ def generate_combined_wav(
             sections,
             start=1,
         ):
-            audio_bytes = synthesize_wav(
+            if cancel_callback is not None:
+                cancel_callback()
+
+            audio_bytes = synthesizer(
                 section.text,
                 speed,
                 voice_name=voice_name,
             )
+
+            if cancel_callback is not None:
+                cancel_callback()
 
             with wave.open(
                 BytesIO(audio_bytes),

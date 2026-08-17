@@ -23,6 +23,10 @@ from app.audiobook_service import (
 )
 from app.cover_service import get_cover_path
 from app.database import engine
+from app.cancellation_service import (
+    AudiobookCancelled,
+    raise_if_audiobook_cancelled,
+)
 from app.export_service import ExportError
 from app.m4b_service import (
     M4B_BITRATE,
@@ -56,6 +60,7 @@ TimingCallback = Callable[
 MetadataBuilder = Callable[[], str]
 
 SynthesisFunction = Callable[..., bytes]
+CancellationCallback = Callable[[], None]
 
 PCM_FORMATS = {
     1: "u8",
@@ -74,6 +79,7 @@ def create_direct_m4b(
     *,
     cover_path: Path | None = None,
     synthesizer: SynthesisFunction = synthesize_wav,
+    cancel_callback: CancellationCallback | None = None,
 ) -> Path:
     """Stream narration into AAC, then remux it into chaptered M4B."""
     if not sections:
@@ -134,11 +140,17 @@ def create_direct_m4b(
             sections,
             start=1,
         ):
+            if cancel_callback is not None:
+                cancel_callback()
+
             audio_bytes = synthesizer(
                 section.text,
                 job.speed,
                 voice_name=job.voice,
             )
+
+            if cancel_callback is not None:
+                cancel_callback()
 
             with wave.open(
                 BytesIO(audio_bytes),
@@ -434,6 +446,10 @@ def run_direct_m4b_job(
             return
 
         try:
+            raise_if_audiobook_cancelled(
+                job_id
+            )
+
             delete_job_timings(
                 session,
                 job_id,
@@ -561,6 +577,15 @@ def run_direct_m4b_job(
                 cover_path=get_cover_path(
                     job.book_id
                 ),
+                cancel_callback=(
+                    lambda: raise_if_audiobook_cancelled(
+                        job_id
+                    )
+                ),
+            )
+
+            raise_if_audiobook_cancelled(
+                job_id
             )
 
             job.status = "completed"
@@ -600,11 +625,25 @@ def run_direct_m4b_job(
                 except ExportError:
                     pass
 
-                failed_job.status = "failed"
+                cancelled = isinstance(
+                    error,
+                    AudiobookCancelled,
+                )
+
+                failed_job.status = (
+                    "cancelled"
+                    if cancelled
+                    else "failed"
+                )
                 failed_job.output_size_bytes = None
                 failed_job.error_message = str(
                     error
                 )
+                if cancelled:
+                    failed_job.completed_sections = 0
+                    failed_job.output_size_bytes = None
+                    failed_job.error_message = None
+
                 failed_job.updated_at = (
                     utc_timestamp()
                 )

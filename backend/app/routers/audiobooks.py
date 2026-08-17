@@ -51,6 +51,7 @@ from app.m4b_service import (
     validate_timings,
 )
 from app.models import AudiobookJob, Book
+from app.models import utc_timestamp
 from app.schemas import AudiobookCreateRequest
 from app.storage_service import (
     estimate_compressed_audio_size_bytes,
@@ -379,6 +380,66 @@ def create_audiobook_job(
     )
 
     return serialize_job(job, book, session)
+
+
+@router.post("/audiobook-jobs/{job_id}/cancel")
+def cancel_audiobook_job(
+    job_id: int,
+    session: DatabaseSession,
+) -> dict[str, object]:
+    """Request cancellation of queued or running generation."""
+    job = session.get(
+        AudiobookJob,
+        job_id,
+    )
+
+    if job is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Audiobook job not found.",
+        )
+
+    if job.status == "queued":
+        job.status = "cancelled"
+    elif job.status in {
+        "running",
+        "cancelling",
+    }:
+        job.status = "cancelling"
+    elif job.status == "cancelled":
+        pass
+    else:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Only queued or running audiobook "
+                "generation can be cancelled."
+            ),
+        )
+
+    job.error_message = None
+    job.updated_at = utc_timestamp()
+
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+
+    book = session.get(
+        Book,
+        job.book_id,
+    )
+
+    if book is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Book not found.",
+        )
+
+    return serialize_job(
+        job,
+        book,
+        session,
+    )
 
 
 @router.get("/books/{book_id}/audiobook-jobs")
