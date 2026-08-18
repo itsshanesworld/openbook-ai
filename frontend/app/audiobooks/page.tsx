@@ -107,6 +107,7 @@ interface AudiobookJob {
   book_author: string | null;
   cover: CoverInfo;
   status: "queued" | "running" | "cancelling" | "cancelled" | "completed" | "failed";
+  output_format: "wav" | "mp3" | "m4b" | null;
   speed: number;
   voice: string;
   total_sections: number;
@@ -263,6 +264,8 @@ export default function AudiobooksPage() {
   const [deletingArtifact, setDeletingArtifact] =
     useState<string | null>(null);
   const [cancellingJobId, setCancellingJobId] =
+    useState<number | null>(null);
+  const [retryingJobId, setRetryingJobId] =
     useState<number | null>(null);
 
   const [error, setError] = useState("");
@@ -790,6 +793,48 @@ export default function AudiobooksPage() {
       );
     } finally {
       setDeletingArtifact(null);
+    }
+  }
+
+  async function retryAudiobook(
+    job: AudiobookJob,
+  ): Promise<void> {
+    if (!job.output_format) {
+      setError(
+        "This legacy audiobook job cannot be retried because its original output format was not recorded.",
+      );
+      return;
+    }
+
+    setRetryingJobId(job.id);
+    clearMessages();
+
+    try {
+      const retriedJob = await requestJson<AudiobookJob>(
+        `${API_URL}/audiobook-jobs/${job.id}/retry`,
+        {
+          method: "POST",
+        },
+      );
+
+      setJobs((current) => [
+        retriedJob,
+        ...current.filter(
+          (existingJob) =>
+            existingJob.id !== retriedJob.id,
+        ),
+      ]);
+
+      setMessage(
+        `Retry started using the original ${job.output_format.toUpperCase()} format, narrator, and speed.`,
+      );
+    } catch (caughtError) {
+      showError(
+        caughtError,
+        "Audiobook retry could not be started.",
+      );
+    } finally {
+      setRetryingJobId(null);
     }
   }
 
@@ -1933,6 +1978,33 @@ export default function AudiobooksPage() {
                           ? "Deleting..."
                           : "Delete all job files"}
                       </button>
+                    </div>
+                  )}
+
+                  {(job.status === "failed" ||
+                    job.status === "cancelled") && (
+                    <div className="mt-4">
+                      {job.output_format ? (
+                        <button
+                          className="rounded-lg border border-blue-400/40 bg-blue-500/10 px-4 py-2 text-sm font-semibold text-blue-200 disabled:cursor-not-allowed disabled:opacity-40"
+                          disabled={
+                            retryingJobId === job.id ||
+                            activeJob
+                          }
+                          onClick={() =>
+                            void retryAudiobook(job)
+                          }
+                          type="button"
+                        >
+                          {retryingJobId === job.id
+                            ? "Retrying..."
+                            : `Retry ${job.output_format.toUpperCase()}`}
+                        </button>
+                      ) : (
+                        <p className="rounded-lg border border-slate-700 bg-slate-800/50 p-3 text-sm leading-6 text-slate-400">
+                          Retry is unavailable for this legacy job because its original output format was not recorded.
+                        </p>
+                      )}
                     </div>
                   )}
 

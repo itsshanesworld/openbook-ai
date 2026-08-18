@@ -87,6 +87,11 @@ class AudiobookJob(SQLModel, table=True):
     status: str = Field(default="queued", index=True)
     speed: float = 1.0
     voice: str | None = None
+
+    output_format: str | None = Field(
+        default=None,
+        max_length=10,
+    )
     total_sections: int
     completed_sections: int = 0
     output_filename: str | None = None

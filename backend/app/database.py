@@ -21,6 +21,7 @@ def create_database_tables() -> None:
     """Create tables and apply lightweight SQLite schema upgrades."""
     SQLModel.metadata.create_all(engine)
     ensure_audiobook_job_voice_column()
+    ensure_audiobook_job_output_format_column()
     ensure_book_metadata_override_columns()
 
 
@@ -57,6 +58,25 @@ def get_session() -> Generator[Session, None, None]:
     with Session(engine) as session:
         yield session
 
+
+
+def ensure_audiobook_job_output_format_column() -> None:
+    """Add generation-format storage to existing audiobook jobs."""
+    with engine.begin() as connection:
+        columns = connection.exec_driver_sql(
+            "PRAGMA table_info(audiobookjob)"
+        ).fetchall()
+
+        column_names = {
+            str(column[1])
+            for column in columns
+        }
+
+        if "output_format" not in column_names:
+            connection.exec_driver_sql(
+                "ALTER TABLE audiobookjob "
+                "ADD COLUMN output_format TEXT"
+            )
 
 def ensure_audiobook_job_voice_column() -> None:
     """Add narrator voice storage to existing databases."""

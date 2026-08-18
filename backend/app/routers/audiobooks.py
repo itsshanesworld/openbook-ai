@@ -352,6 +352,7 @@ def create_audiobook_job(
         voice=voice_name,
         total_sections=len(sections),
         completed_sections=0,
+        output_format=request.output_format,
     )
 
     session.add(job)
@@ -380,6 +381,64 @@ def create_audiobook_job(
     )
 
     return serialize_job(job, book, session)
+
+
+@router.post("/audiobook-jobs/{job_id}/retry")
+def retry_audiobook_job(
+    job_id: int,
+    background_tasks: BackgroundTasks,
+    session: DatabaseSession,
+) -> dict[str, object]:
+    """Create a new job using a failed or cancelled job's settings."""
+    original_job = session.get(
+        AudiobookJob,
+        job_id,
+    )
+
+    if original_job is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Audiobook job not found.",
+        )
+
+    if original_job.status not in {
+        "failed",
+        "cancelled",
+    }:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Only failed or cancelled audiobook "
+                "jobs can be retried."
+            ),
+        )
+
+    if original_job.output_format not in {
+        "wav",
+        "mp3",
+        "m4b",
+    }:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This legacy audiobook job does not "
+                "record its original output format. "
+                "Start a new audiobook instead."
+            ),
+        )
+
+    retry_request = AudiobookCreateRequest(
+        output_format=original_job.output_format,
+        speed=original_job.speed,
+        voice=original_job.voice,
+    )
+
+    return create_audiobook_job(
+        book_id=original_job.book_id,
+        request=retry_request,
+        background_tasks=background_tasks,
+        session=session,
+    )
 
 
 @router.post("/audiobook-jobs/{job_id}/cancel")
@@ -1361,4 +1420,5 @@ def serialize_job(
         "updated_at": job.updated_at,
         "mp3": mp3_info,
         "m4b": m4b_info,
+        "output_format": job.output_format,
     }
