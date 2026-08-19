@@ -66,6 +66,11 @@ from app.tts_service import (
     resolve_voice_name,
 )
 
+from app.storage_cleanup_service import (
+    cleanup_safe_storage_files,
+    get_storage_cleanup_summary as build_storage_cleanup_summary,
+)
+
 router = APIRouter(tags=["Audiobooks"])
 
 DatabaseSession = Annotated[
@@ -234,6 +239,26 @@ def list_tts_voices() -> dict[str, object]:
         "default_voice": get_default_voice_name(),
         "voices": list_installed_voices(),
     }
+
+
+@router.get("/storage/cleanup-summary")
+def get_storage_cleanup_dashboard(
+    session: DatabaseSession,
+) -> dict[str, object]:
+    """Return safe audiobook storage cleanup candidates."""
+    return build_storage_cleanup_summary(
+        session
+    )
+
+
+@router.post("/storage/cleanup-safe")
+def clean_safe_audiobook_storage(
+    session: DatabaseSession,
+) -> dict[str, object]:
+    """Delete only safe inactive or temporary audiobook files."""
+    return cleanup_safe_storage_files(
+        session
+    )
 
 
 @router.post(
@@ -1004,7 +1029,7 @@ def delete_audiobook_job(
         job_id,
     )
 
-    if job.status in {"queued", "running"}:
+    if job.status in {"queued", "running", "cancelling"}:
         raise HTTPException(
             status_code=409,
             detail=(

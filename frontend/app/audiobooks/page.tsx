@@ -40,6 +40,44 @@ interface AudiobookStorageSummary {
   reclaimable_wav_bytes: number;
 }
 
+interface StorageCleanupFile {
+  filename: string;
+  size_bytes: number;
+  category: string;
+  reason: string;
+  safe_to_delete: boolean;
+  job_id: number | null;
+}
+
+interface StorageCleanupSummary {
+  active_job_count: number;
+  total_file_count: number;
+  total_bytes: number;
+  owned_count: number;
+  owned_bytes: number;
+  protected_count: number;
+  protected_bytes: number;
+  temporary_count: number;
+  temporary_bytes: number;
+  inactive_artifact_count: number;
+  inactive_artifact_bytes: number;
+  orphaned_count: number;
+  manual_review_bytes: number;
+  safe_reclaimable_count: number;
+  safe_reclaimable_bytes: number;
+  temporary_files: StorageCleanupFile[];
+  inactive_artifacts: StorageCleanupFile[];
+  orphaned_files: StorageCleanupFile[];
+}
+
+interface StorageCleanupResult {
+  deleted_count: number;
+  freed_bytes: number;
+  deleted_files: string[];
+  summary: StorageCleanupSummary;
+}
+
+
 interface GenerationEstimate {
   book_id: number;
   speed: number;
@@ -241,6 +279,8 @@ export default function AudiobooksPage() {
     useState<StorageStatus | null>(null);
   const [storageSummary, setStorageSummary] =
     useState<AudiobookStorageSummary | null>(null);
+  const [cleanupSummary, setCleanupSummary] =
+    useState<StorageCleanupSummary | null>(null);
   const [generationEstimate, setGenerationEstimate] =
     useState<GenerationEstimate | null>(null);
   const [estimateLoading, setEstimateLoading] =
@@ -267,6 +307,8 @@ export default function AudiobooksPage() {
     useState<number | null>(null);
   const [retryingJobId, setRetryingJobId] =
     useState<number | null>(null);
+  const [cleaningStorage, setCleaningStorage] =
+    useState(false);
 
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -301,6 +343,7 @@ export default function AudiobooksPage() {
         const [
           status,
           summary,
+          cleanup,
         ] = await Promise.all([
           requestJson<StorageStatus>(
             `${API_URL}/storage/status`,
@@ -308,11 +351,15 @@ export default function AudiobooksPage() {
           requestJson<AudiobookStorageSummary>(
             `${API_URL}/storage/audiobooks-summary`,
           ),
+          requestJson<StorageCleanupSummary>(
+            `${API_URL}/storage/cleanup-summary`,
+          ),
         ]);
 
         if (!cancelled) {
           setStorageStatus(status);
           setStorageSummary(summary);
+          setCleanupSummary(cleanup);
         }
       } catch {
         // Existing user actions continue to surface backend errors.
@@ -720,6 +767,7 @@ export default function AudiobooksPage() {
       const [
         status,
         summary,
+        cleanup,
       ] = await Promise.all([
         requestJson<StorageStatus>(
           `${API_URL}/storage/status`,
@@ -727,12 +775,63 @@ export default function AudiobooksPage() {
         requestJson<AudiobookStorageSummary>(
           `${API_URL}/storage/audiobooks-summary`,
         ),
+        requestJson<StorageCleanupSummary>(
+          `${API_URL}/storage/cleanup-summary`,
+        ),
       ]);
 
       setStorageStatus(status);
       setStorageSummary(summary);
+      setCleanupSummary(cleanup);
     } catch {
       // Periodic storage refresh will retry.
+    }
+  }
+
+  async function cleanSafeStorage(): Promise<void> {
+    if (
+      !cleanupSummary ||
+      cleanupSummary.safe_reclaimable_count === 0
+    ) {
+      setMessage(
+        "Storage is already clean. No safe files need removal.",
+      );
+      return;
+    }
+
+    setCleaningStorage(true);
+    clearMessages();
+
+    try {
+      const result = await requestJson<StorageCleanupResult>(
+        `${API_URL}/storage/cleanup-safe`,
+        {
+          method: "POST",
+        },
+      );
+
+      setCleanupSummary(result.summary);
+
+      await refreshStorageAfterCleanup();
+
+      if (result.deleted_count === 0) {
+        setMessage(
+          "No safe cleanup files remained.",
+        );
+      } else {
+        setMessage(
+          `Cleaned ${result.deleted_count.toLocaleString()} safe ${
+            result.deleted_count === 1 ? "file" : "files"
+          } and reclaimed ${formatFileSize(result.freed_bytes)}.`,
+        );
+      }
+    } catch (caughtError) {
+      showError(
+        caughtError,
+        "Safe storage cleanup could not be completed.",
+      );
+    } finally {
+      setCleaningStorage(false);
     }
   }
 
@@ -1105,6 +1204,218 @@ export default function AudiobooksPage() {
               Informational only. Use each job&apos;s Storage cleanup
               controls to choose exactly what to remove.
             </p>
+          </section>
+        )}
+
+        {cleanupSummary && (
+          <section className="mt-5 rounded-xl border border-slate-800 bg-slate-900 p-5">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h2 className="font-semibold">
+                  Storage cleanup dashboard
+                </h2>
+
+                <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-400">
+                  OpenBook AI can safely remove stale temporary files
+                  and leftover audio from failed or cancelled jobs.
+                  Active jobs and orphaned files are protected.
+                </p>
+              </div>
+
+              <div className="text-right">
+                <p className="text-xs uppercase tracking-wide text-slate-500">
+                  Safely reclaimable
+                </p>
+
+                <p className="mt-1 text-xl font-bold text-white">
+                  {formatFileSize(
+                    cleanupSummary.safe_reclaimable_bytes,
+                  )}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
+                <p className="text-xs uppercase tracking-wide text-slate-500">
+                  Safe files
+                </p>
+
+                <p className="mt-2 text-lg font-semibold">
+                  {cleanupSummary.safe_reclaimable_count.toLocaleString()}
+                </p>
+
+                <p className="mt-1 text-xs text-slate-500">
+                  Ready for automatic cleanup
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
+                <p className="text-xs uppercase tracking-wide text-slate-500">
+                  Temporary
+                </p>
+
+                <p className="mt-2 text-lg font-semibold">
+                  {formatFileSize(
+                    cleanupSummary.temporary_bytes,
+                  )}
+                </p>
+
+                <p className="mt-1 text-xs text-slate-500">
+                  {cleanupSummary.temporary_count.toLocaleString()} stale{" "}
+                  {cleanupSummary.temporary_count === 1
+                    ? "file"
+                    : "files"}
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
+                <p className="text-xs uppercase tracking-wide text-slate-500">
+                  Protected
+                </p>
+
+                <p className="mt-2 text-lg font-semibold">
+                  {cleanupSummary.active_job_count.toLocaleString()}{" "}
+                  {cleanupSummary.active_job_count === 1
+                    ? "job"
+                    : "jobs"}
+                </p>
+
+                <p className="mt-1 text-xs text-slate-500">
+                  Active generation is never cleaned
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
+                <p className="text-xs uppercase tracking-wide text-slate-500">
+                  Manual review
+                </p>
+
+                <p className="mt-2 text-lg font-semibold">
+                  {formatFileSize(
+                    cleanupSummary.manual_review_bytes,
+                  )}
+                </p>
+
+                <p className="mt-1 text-xs text-slate-500">
+                  {cleanupSummary.orphaned_count.toLocaleString()} orphaned{" "}
+                  {cleanupSummary.orphaned_count === 1
+                    ? "file"
+                    : "files"}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-lg border border-slate-800 bg-slate-950/40 p-4 text-sm text-slate-400">
+              <div className="flex flex-wrap gap-x-6 gap-y-2">
+                <span>
+                  Failed/cancelled leftovers:{" "}
+                  <strong className="text-slate-200">
+                    {cleanupSummary.inactive_artifact_count.toLocaleString()}
+                  </strong>{" "}
+                  ({formatFileSize(
+                    cleanupSummary.inactive_artifact_bytes,
+                  )})
+                </span>
+
+                <span>
+                  Owned audio:{" "}
+                  <strong className="text-slate-200">
+                    {cleanupSummary.owned_count.toLocaleString()}
+                  </strong>{" "}
+                  ({formatFileSize(
+                    cleanupSummary.owned_bytes,
+                  )})
+                </span>
+
+                <span>
+                  Files scanned:{" "}
+                  <strong className="text-slate-200">
+                    {cleanupSummary.total_file_count.toLocaleString()}
+                  </strong>
+                </span>
+              </div>
+            </div>
+
+            {cleanupSummary.active_job_count > 0 && (
+              <p className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm leading-6 text-amber-100">
+                Safe cleanup is paused while audiobook generation is
+                active. This prevents cleanup from racing with a
+                running encoder.
+              </p>
+            )}
+
+            {cleanupSummary.orphaned_count > 0 && (
+              <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4">
+                <p className="text-sm font-semibold text-amber-100">
+                  Manual review required
+                </p>
+
+                <p className="mt-1 text-sm leading-6 text-amber-100/80">
+                  Orphaned files are never deleted automatically because
+                  they are not associated with a known audiobook job.
+                </p>
+
+                <div className="mt-3 space-y-2">
+                  {cleanupSummary.orphaned_files
+                    .slice(0, 8)
+                    .map((file) => (
+                      <div
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-slate-950/50 px-3 py-2 text-xs"
+                        key={file.filename}
+                      >
+                        <span className="break-all text-slate-300">
+                          {file.filename}
+                        </span>
+
+                        <span className="text-slate-500">
+                          {formatFileSize(file.size_bytes)}
+                        </span>
+                      </div>
+                    ))}
+                </div>
+
+                {cleanupSummary.orphaned_count > 8 && (
+                  <p className="mt-2 text-xs text-amber-100/70">
+                    Plus{" "}
+                    {(
+                      cleanupSummary.orphaned_count - 8
+                    ).toLocaleString()}{" "}
+                    more orphaned files.
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className="mt-5 flex flex-wrap items-center gap-4">
+              <button
+                className="rounded-lg bg-emerald-400 px-5 py-2 font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={
+                  cleaningStorage ||
+                  cleanupSummary.safe_reclaimable_count === 0 ||
+                  cleanupSummary.active_job_count > 0
+                }
+                onClick={() =>
+                  void cleanSafeStorage()
+                }
+                type="button"
+              >
+                {cleaningStorage
+                  ? "Cleaning..."
+                  : cleanupSummary.safe_reclaimable_count === 0
+                    ? "Storage is clean"
+                    : `Clean ${cleanupSummary.safe_reclaimable_count.toLocaleString()} safe ${
+                        cleanupSummary.safe_reclaimable_count === 1
+                          ? "file"
+                          : "files"
+                      }`}
+              </button>
+
+              <p className="text-xs leading-5 text-slate-500">
+                Bulk cleanup never removes completed audiobook files
+                or orphaned/manual-review files.
+              </p>
+            </div>
           </section>
         )}
 
