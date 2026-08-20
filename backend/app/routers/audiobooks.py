@@ -241,6 +241,118 @@ def list_tts_voices() -> dict[str, object]:
     }
 
 
+@router.get("/storage/audiobook-artifacts")
+def get_audiobook_storage_artifacts(
+    session: DatabaseSession,
+) -> dict[str, object]:
+    """Return verified audiobook files sorted largest-first."""
+    jobs = session.exec(
+        select(AudiobookJob)
+        .where(
+            AudiobookJob.status == "completed"
+        )
+    ).all()
+
+    artifacts: list[dict[str, object]] = []
+
+    for job in jobs:
+        book = session.get(
+            Book,
+            job.book_id,
+        )
+
+        if book is None:
+            continue
+
+        (
+            book_title,
+            book_author,
+        ) = resolve_book_metadata(
+            book,
+            session,
+        )
+
+        wav_info = get_wav_export_info(
+            job
+        )
+        mp3_info = get_mp3_export_info(
+            job
+        )
+        m4b_info = get_m4b_export_info(
+            job
+        )
+
+        has_compressed_copy = (
+            bool(mp3_info["available"])
+            or bool(m4b_info["available"])
+        )
+
+        candidates = (
+            (
+                "wav",
+                wav_info,
+                has_compressed_copy,
+            ),
+            (
+                "mp3",
+                mp3_info,
+                True,
+            ),
+            (
+                "m4b",
+                m4b_info,
+                True,
+            ),
+        )
+
+        for (
+            kind,
+            info,
+            can_delete,
+        ) in candidates:
+            if not bool(
+                info["available"]
+            ):
+                continue
+
+            artifacts.append(
+                {
+                    "job_id": job.id,
+                    "book_id": job.book_id,
+                    "book_title": book_title,
+                    "book_author": book_author,
+                    "book_filename": book.filename,
+                    "kind": kind,
+                    "size_bytes": int(
+                        info["size_bytes"]
+                        or 0
+                    ),
+                    "can_delete": can_delete,
+                    "created_at": job.created_at,
+                }
+            )
+
+    artifacts.sort(
+        key=lambda item: int(
+            item["size_bytes"]
+        ),
+        reverse=True,
+    )
+
+    return {
+        "artifact_count": len(
+            artifacts
+        ),
+        "total_bytes": sum(
+            int(
+                item["size_bytes"]
+            )
+            for item in artifacts
+        ),
+        "artifacts": artifacts,
+    }
+
+
 @router.get("/storage/cleanup-summary")
 def get_storage_cleanup_dashboard(
     session: DatabaseSession,

@@ -40,6 +40,24 @@ interface AudiobookStorageSummary {
   reclaimable_wav_bytes: number;
 }
 
+interface AudiobookStorageArtifact {
+  job_id: number;
+  book_id: number;
+  book_title: string;
+  book_author: string | null;
+  book_filename: string;
+  kind: "wav" | "mp3" | "m4b";
+  size_bytes: number;
+  can_delete: boolean;
+  created_at: string;
+}
+
+interface AudiobookStorageArtifacts {
+  artifact_count: number;
+  total_bytes: number;
+  artifacts: AudiobookStorageArtifact[];
+}
+
 interface StorageCleanupFile {
   filename: string;
   size_bytes: number;
@@ -292,6 +310,8 @@ export default function AudiobooksPage() {
     useState<StorageStatus | null>(null);
   const [storageSummary, setStorageSummary] =
     useState<AudiobookStorageSummary | null>(null);
+  const [storageArtifacts, setStorageArtifacts] =
+    useState<AudiobookStorageArtifacts | null>(null);
   const [cleanupSummary, setCleanupSummary] =
     useState<StorageCleanupSummary | null>(null);
   const [generationEstimate, setGenerationEstimate] =
@@ -434,6 +454,7 @@ export default function AudiobooksPage() {
         const [
           status,
           summary,
+          artifacts,
           cleanup,
         ] = await Promise.all([
           requestJson<StorageStatus>(
@@ -441,6 +462,9 @@ export default function AudiobooksPage() {
           ),
           requestJson<AudiobookStorageSummary>(
             `${API_URL}/storage/audiobooks-summary`,
+          ),
+          requestJson<AudiobookStorageArtifacts>(
+            `${API_URL}/storage/audiobook-artifacts`,
           ),
           requestJson<StorageCleanupSummary>(
             `${API_URL}/storage/cleanup-summary`,
@@ -450,6 +474,7 @@ export default function AudiobooksPage() {
         if (!cancelled) {
           setStorageStatus(status);
           setStorageSummary(summary);
+          setStorageArtifacts(artifacts);
           setCleanupSummary(cleanup);
         }
       } catch {
@@ -858,6 +883,7 @@ export default function AudiobooksPage() {
       const [
         status,
         summary,
+        artifacts,
         cleanup,
       ] = await Promise.all([
         requestJson<StorageStatus>(
@@ -866,6 +892,9 @@ export default function AudiobooksPage() {
         requestJson<AudiobookStorageSummary>(
           `${API_URL}/storage/audiobooks-summary`,
         ),
+        requestJson<AudiobookStorageArtifacts>(
+          `${API_URL}/storage/audiobook-artifacts`,
+        ),
         requestJson<StorageCleanupSummary>(
           `${API_URL}/storage/cleanup-summary`,
         ),
@@ -873,6 +902,7 @@ export default function AudiobooksPage() {
 
       setStorageStatus(status);
       setStorageSummary(summary);
+      setStorageArtifacts(artifacts);
       setCleanupSummary(cleanup);
     } catch {
       // Periodic storage refresh will retry.
@@ -1294,6 +1324,135 @@ export default function AudiobooksPage() {
             <p className="mt-3 text-xs leading-5 text-slate-500">
               Informational only. Use each job&apos;s Storage cleanup
               controls to choose exactly what to remove.
+            </p>
+          </section>
+        )}
+
+        {storageArtifacts && (
+          <section className="mt-5 rounded-xl border border-slate-800 bg-slate-900 p-5">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h2 className="font-semibold">
+                  Storage by audiobook
+                </h2>
+
+                <p className="mt-1 text-sm leading-6 text-slate-400">
+                  Verified audiobook files sorted largest-first so
+                  you can reclaim the most space first.
+                </p>
+              </div>
+
+              <div className="text-right">
+                <p className="text-xs uppercase tracking-wide text-slate-500">
+                  Stored artifacts
+                </p>
+
+                <p className="mt-1 text-xl font-bold text-white">
+                  {storageArtifacts.artifact_count.toLocaleString()}
+                </p>
+
+                <p className="text-xs text-slate-500">
+                  {formatFileSize(
+                    storageArtifacts.total_bytes,
+                  )} total
+                </p>
+              </div>
+            </div>
+
+            {storageArtifacts.artifacts.length === 0 ? (
+              <p className="mt-5 rounded-lg border border-slate-800 bg-slate-950/50 p-4 text-sm text-slate-400">
+                No generated audiobook files are currently stored.
+              </p>
+            ) : (
+              <div className="mt-5 space-y-3">
+                {storageArtifacts.artifacts.map(
+                  (artifact, index) => {
+                    const deletionId =
+                      `${artifact.job_id}-${artifact.kind}`;
+
+                    return (
+                      <div
+                        className="flex flex-col gap-4 rounded-lg border border-slate-800 bg-slate-950/60 p-4 lg:flex-row lg:items-center lg:justify-between"
+                        key={deletionId}
+                      >
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs font-semibold text-slate-500">
+                              #{index + 1}
+                            </span>
+
+                            <span className="rounded-md bg-slate-800 px-2 py-1 text-xs font-bold uppercase text-cyan-200">
+                              {artifact.kind}
+                            </span>
+
+                            <span className="text-xs text-slate-500">
+                              Job {artifact.job_id}
+                            </span>
+                          </div>
+
+                          <p className="mt-2 truncate font-semibold text-white">
+                            {artifact.book_title}
+                          </p>
+
+                          <p className="mt-1 truncate text-sm text-slate-400">
+                            {artifact.book_author
+                              ? `${artifact.book_author} • `
+                              : ""}
+                            {artifact.book_filename}
+                          </p>
+                        </div>
+
+                        <div className="flex shrink-0 flex-wrap items-center gap-4">
+                          <div className="text-right">
+                            <p className="text-lg font-bold text-white">
+                              {formatFileSize(
+                                artifact.size_bytes,
+                              )}
+                            </p>
+
+                            <p className="text-xs text-slate-500">
+                              {storageArtifacts.total_bytes > 0
+                                ? `${(
+                                    (artifact.size_bytes /
+                                      storageArtifacts.total_bytes) *
+                                    100
+                                  ).toFixed(1)}% of audio storage`
+                                : "0% of audio storage"}
+                            </p>
+                          </div>
+
+                          <button
+                            className="rounded-lg border border-red-400/40 px-4 py-2 text-sm font-semibold text-red-200 disabled:cursor-not-allowed disabled:opacity-40"
+                            disabled={
+                              deletingArtifact !== null ||
+                              !artifact.can_delete
+                            }
+                            onClick={() =>
+                              void deleteExport(
+                                artifact.job_id,
+                                artifact.kind,
+                              )
+                            }
+                            type="button"
+                          >
+                            {deletingArtifact === deletionId
+                              ? `Deleting ${artifact.kind.toUpperCase()}...`
+                              : artifact.can_delete
+                                ? `Delete ${artifact.kind.toUpperCase()}`
+                                : "Keep compressed copy first"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  },
+                )}
+              </div>
+            )}
+
+            <p className="mt-4 text-xs leading-5 text-slate-500">
+              WAV masters without an MP3 or M4B copy stay protected.
+              MP3 and M4B exports can be removed individually using
+              the same verified deletion logic as job history.
             </p>
           </section>
         )}
