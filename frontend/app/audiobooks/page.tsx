@@ -367,6 +367,17 @@ export default function AudiobooksPage() {
       job.status === "cancelling",
   );
 
+  const cancellableJob = useMemo(
+    () =>
+      jobs.find(
+        (job) =>
+          job.status === "queued" ||
+          job.status === "running" ||
+          job.status === "cancelling",
+      ) ?? null,
+    [jobs],
+  );
+
 
   const filteredJobs = useMemo(() => {
     const normalizedSearch =
