@@ -299,6 +299,8 @@ function getErrorMessage(
   return `Request failed with status ${status}.`;
 }
 
+const JOB_HISTORY_PAGE_SIZE = 5;
+
 export default function AudiobooksPage() {
   const [books, setBooks] = useState<BookSummary[]>([]);
   const [bookId, setBookId] = useState<number | null>(null);
@@ -347,6 +349,8 @@ export default function AudiobooksPage() {
     useState<JobStatusFilter>("all");
   const [jobFormatFilter, setJobFormatFilter] =
     useState<JobFormatFilter>("all");
+  const [visibleJobCount, setVisibleJobCount] =
+    useState(JOB_HISTORY_PAGE_SIZE);
 
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -435,6 +439,35 @@ export default function AudiobooksPage() {
     jobSearch.trim() !== "" ||
     jobStatusFilter !== "all" ||
     jobFormatFilter !== "all";
+
+
+  const visibleJobs = useMemo(
+    () =>
+      filteredJobs.slice(
+        0,
+        visibleJobCount,
+      ),
+    [
+      filteredJobs,
+      visibleJobCount,
+    ],
+  );
+
+  const hiddenJobCount = Math.max(
+    filteredJobs.length - visibleJobs.length,
+    0,
+  );
+
+  useEffect(() => {
+    setVisibleJobCount(
+      JOB_HISTORY_PAGE_SIZE,
+    );
+  }, [
+    bookId,
+    jobFormatFilter,
+    jobSearch,
+    jobStatusFilter,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -2287,13 +2320,26 @@ export default function AudiobooksPage() {
                   <span>
                     Showing{" "}
                     <strong className="text-slate-300">
-                      {filteredJobs.length.toLocaleString()}
+                      {visibleJobs.length.toLocaleString()}
                     </strong>{" "}
                     of{" "}
                     <strong className="text-slate-300">
-                      {jobs.length.toLocaleString()}
+                      {filteredJobs.length.toLocaleString()}
                     </strong>{" "}
-                    {jobs.length === 1 ? "job" : "jobs"}
+                    {jobFiltersActive
+                      ? "matching jobs"
+                      : filteredJobs.length === 1
+                        ? "job"
+                        : "jobs"}
+                    {jobFiltersActive && (
+                      <>
+                        {" "}·{" "}
+                        <strong className="text-slate-300">
+                          {jobs.length.toLocaleString()}
+                        </strong>{" "}
+                        total
+                      </>
+                    )}
                   </span>
 
                   {jobFiltersActive && (
@@ -2328,7 +2374,7 @@ export default function AudiobooksPage() {
               )}
 
             <div className="mt-6 space-y-5">
-              {filteredJobs.map((job) => (
+              {visibleJobs.map((job) => (
                 <article
                   className="rounded-2xl border border-slate-700 bg-slate-950 p-5"
                   key={job.id}
@@ -2743,6 +2789,37 @@ export default function AudiobooksPage() {
                 </article>
               ))}
             </div>
+
+            {hiddenJobCount > 0 && (
+              <div className="mt-5 flex flex-col items-center gap-2">
+                <button
+                  className="rounded-lg border border-slate-700 bg-slate-950 px-5 py-2.5 text-sm font-semibold text-slate-200 transition hover:border-cyan-400 hover:text-white"
+                  onClick={() =>
+                    setVisibleJobCount(
+                      (currentCount) =>
+                        Math.min(
+                          currentCount
+                            + JOB_HISTORY_PAGE_SIZE,
+                          filteredJobs.length,
+                        ),
+                    )
+                  }
+                  type="button"
+                >
+                  Show more audiobook jobs
+                </button>
+
+                <p className="text-xs text-slate-500">
+                  {Math.min(
+                    JOB_HISTORY_PAGE_SIZE,
+                    hiddenJobCount,
+                  ).toLocaleString()}{" "}
+                  more available ·{" "}
+                  {hiddenJobCount.toLocaleString()}{" "}
+                  hidden
+                </p>
+              </div>
+            )}
           </section>
         </section>
       </div>
