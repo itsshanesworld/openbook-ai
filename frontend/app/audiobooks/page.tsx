@@ -169,6 +169,7 @@ interface AudiobookJob {
   total_sections: number;
   completed_sections: number;
   progress_percent: number;
+  queue_position: number | null;
   output_filename: string | null;
   output_size_bytes: number | null;
   wav_available: boolean;
@@ -360,21 +361,18 @@ export default function AudiobooksPage() {
     [bookId, books],
   );
 
-  const activeJob = jobs.some(
-    (job) =>
-      job.status === "queued" ||
-      job.status === "running" ||
-      job.status === "cancelling",
-  );
-
-  const cancellableJob = useMemo(
+  const activeFormats = useMemo(
     () =>
-      jobs.find(
-        (job) =>
-          job.status === "queued" ||
-          job.status === "running" ||
-          job.status === "cancelling",
-      ) ?? null,
+      new Set(
+        jobs
+          .filter(
+            (job) =>
+              job.status === "queued" ||
+              job.status === "running" ||
+              job.status === "cancelling",
+          )
+          .map((job) => job.output_format),
+      ),
     [jobs],
   );
 
@@ -796,22 +794,28 @@ export default function AudiobooksPage() {
         ...current,
       ]);
 
+      const queuePositionMessage =
+        job.queue_position !== null
+          ? ` Queue position: #${job.queue_position}.`
+          : "";
+
       if (outputFormat === "m4b") {
         setMessage(
-          "Storage-efficient M4B generation started. "
-          + "OpenBook AI will stream narration into AAC and build "
-          + "the chaptered M4B without storing a combined WAV.",
+          "Storage-efficient M4B job queued."
+          + queuePositionMessage
+          + " OpenBook AI will process audiobook jobs one at a time.",
         );
       } else if (outputFormat === "mp3") {
         setMessage(
-          "Storage-efficient MP3 generation started. "
-          + "OpenBook AI will stream narration directly into MP3 "
-          + "without storing a combined WAV.",
+          "Storage-efficient MP3 job queued."
+          + queuePositionMessage
+          + " OpenBook AI will process audiobook jobs one at a time.",
         );
       } else {
         setMessage(
-          "WAV audiobook generation started. "
-          + "Keep OpenBook AI running.",
+          "WAV audiobook job queued."
+          + queuePositionMessage
+          + " OpenBook AI will process audiobook jobs one at a time.",
         );
       }
     } catch (caughtError) {
@@ -2079,15 +2083,15 @@ export default function AudiobooksPage() {
                     !bookId ||
                     !voice ||
                     creating ||
-                    activeJob
+                    activeFormats.has("wav")
                   }
                   onClick={() => void createAudiobook()}
                   type="button"
                 >
                   {creating
                     ? "Starting..."
-                    : activeJob
-                      ? "Generation in progress"
+                    : activeFormats.has("wav")
+                      ? "WAV queued or running"
                       : "Generate WAV audiobook"}
                 </button>
 
@@ -2099,7 +2103,7 @@ export default function AudiobooksPage() {
                     !bookId ||
                     !voice ||
                     creating ||
-                    activeJob
+                    activeFormats.has("mp3")
                   }
                   onClick={() =>
                     void createAudiobook("mp3")
@@ -2108,8 +2112,8 @@ export default function AudiobooksPage() {
                 >
                   {creating
                     ? "Starting..."
-                    : activeJob
-                      ? "Generation in progress"
+                    : activeFormats.has("mp3")
+                      ? "MP3 queued or running"
                       : "Generate MP3 directly"}
                 </button>
 
@@ -2151,7 +2155,7 @@ export default function AudiobooksPage() {
                     !bookId ||
                     !voice ||
                     creating ||
-                    activeJob
+                    activeFormats.has("m4b")
                   }
                   onClick={() =>
                     void createAudiobook("m4b")
@@ -2160,8 +2164,8 @@ export default function AudiobooksPage() {
                 >
                   {creating
                     ? "Starting..."
-                    : activeJob
-                      ? "Generation in progress"
+                    : activeFormats.has("m4b")
+                      ? "M4B queued or running"
                       : "Generate M4B directly"}
                 </button>
 
@@ -2463,7 +2467,11 @@ export default function AudiobooksPage() {
                       <p className="text-sm leading-6 text-amber-100">
                         {job.status === "cancelling"
                           ? "Cancellation requested. OpenBook AI is finishing safe cleanup."
-                          : "Generation is currently active."}
+                          : job.status === "queued"
+                            ? job.queue_position !== null
+                              ? `Waiting for earlier jobs. Queue position: #${job.queue_position}.`
+                              : "Waiting in the audiobook queue."
+                            : "Generation is currently active."}
                       </p>
 
                       <button
@@ -2761,7 +2769,9 @@ export default function AudiobooksPage() {
                           className="rounded-lg border border-blue-400/40 bg-blue-500/10 px-4 py-2 text-sm font-semibold text-blue-200 disabled:cursor-not-allowed disabled:opacity-40"
                           disabled={
                             retryingJobId === job.id ||
-                            activeJob
+                            activeFormats.has(
+                              job.output_format,
+                            )
                           }
                           onClick={() =>
                             void retryAudiobook(job)

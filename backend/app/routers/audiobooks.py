@@ -1,5 +1,9 @@
 """Audiobook generation API routes."""
 
+from app.audiobook_queue import (
+    get_queue_position,
+    run_audiobook_queue,
+)
 from pathlib import Path
 from typing import Annotated
 
@@ -467,18 +471,27 @@ def create_audiobook_job(
             detail=str(error),
         ) from error
 
-    active_statement = select(AudiobookJob).where(
+    duplicate_statement = select(AudiobookJob).where(
         AudiobookJob.book_id == book_id,
-        AudiobookJob.status.in_(["queued", "running"]),
+        AudiobookJob.output_format == request.output_format,
+        AudiobookJob.status.in_(
+            [
+                "queued",
+                "running",
+                "cancelling",
+            ]
+        ),
     )
-    active_job = session.exec(active_statement).first()
+    duplicate_job = session.exec(
+        duplicate_statement
+    ).first()
 
-    if active_job is not None:
+    if duplicate_job is not None:
         raise HTTPException(
             status_code=409,
             detail=(
-                "This book already has an active "
-                "audiobook generation job."
+                "This book already has a queued or active "
+                f"{request.output_format.upper()} audiobook job."
             ),
         )
 
@@ -502,19 +515,8 @@ def create_audiobook_job(
             detail="The audiobook job could not be created.",
         )
 
-    job_runners = {
-        "wav": run_audiobook_job,
-        "mp3": run_direct_mp3_job,
-        "m4b": run_direct_m4b_job,
-    }
-
-    job_runner = job_runners[
-        request.output_format
-    ]
-
     background_tasks.add_task(
-        job_runner,
-        job.id,
+        run_audiobook_queue
     )
 
     return serialize_job(job, book, session)
@@ -1539,6 +1541,10 @@ def serialize_job(
         "book_title": book_title,
         "book_author": book_author,
         "cover": get_cover_info(job.book_id),
+        "queue_position": get_queue_position(
+            session,
+            job,
+        ),
         "status": job.status,
         "speed": job.speed,
         "voice": (
