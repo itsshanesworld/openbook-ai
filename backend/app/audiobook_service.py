@@ -24,7 +24,10 @@ from app.models import (
     utc_timestamp,
 )
 from app.storage_service import ensure_storage_capacity
-from app.tts_service import synthesize_wav
+from app.tts_service import (
+    synthesize_wav,
+    synthesize_with_optional_cancellation,
+)
 
 BACKEND_DIRECTORY = Path(__file__).resolve().parent.parent
 AUDIOBOOK_DIRECTORY = BACKEND_DIRECTORY / "data" / "audiobooks"
@@ -225,10 +228,12 @@ def generate_combined_wav(
             if cancel_callback is not None:
                 cancel_callback()
 
-            audio_bytes = synthesizer(
+            audio_bytes = synthesize_with_optional_cancellation(
+                synthesizer,
                 section.text,
                 speed,
                 voice_name=voice_name,
+                cancel_callback=cancel_callback,
             )
 
             if cancel_callback is not None:

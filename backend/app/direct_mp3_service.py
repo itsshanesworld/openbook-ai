@@ -47,6 +47,7 @@ from app.storage_service import (
 from app.tts_service import (
     get_voice_display_name,
     synthesize_wav,
+    synthesize_with_optional_cancellation,
 )
 
 TimingCallback = Callable[
@@ -194,10 +195,12 @@ def create_direct_mp3(
             if cancel_callback is not None:
                 cancel_callback()
 
-            audio_bytes = synthesizer(
+            audio_bytes = synthesize_with_optional_cancellation(
+                synthesizer,
                 section.text,
                 job.speed,
                 voice_name=job.voice,
+                cancel_callback=cancel_callback,
             )
 
             if cancel_callback is not None:

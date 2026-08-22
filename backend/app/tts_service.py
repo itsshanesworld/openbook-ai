@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import os
 import threading
 import wave
@@ -284,6 +285,8 @@ def synthesize_wav(
     text: str,
     speed: float,
     voice_name: str | None = None,
+    *,
+    cancel_callback: Callable[[], None] | None = None,
 ) -> bytes:
     """Generate complete WAV audio using one Piper voice."""
     speech_text = normalize_speech_text(
@@ -302,6 +305,9 @@ def synthesize_wav(
         length_scale=1.0 / speed,
     )
 
+    if cancel_callback is not None:
+        cancel_callback()
+
     with _voice_lock:
         voice = _load_voice(
             resolved_voice
@@ -309,15 +315,69 @@ def synthesize_wav(
 
         audio_buffer = BytesIO()
 
-        with wave.open(
-            audio_buffer,
-            "wb",
-        ) as wav_file:
-            voice.synthesize_wav(
-                speech_text,
-                wav_file,
-                syn_config=synthesis_config,
+        if cancel_callback is None:
+            with wave.open(
+                audio_buffer,
+                "wb",
+            ) as wav_file:
+                voice.synthesize_wav(
+                    speech_text,
+                    wav_file,
+                    syn_config=synthesis_config,
+                )
+        else:
+            audio_chunks = iter(
+                voice.synthesize(
+                    speech_text,
+                    syn_config=synthesis_config,
+                )
             )
+
+            cancel_callback()
+
+            try:
+                first_chunk = next(
+                    audio_chunks
+                )
+            except StopIteration:
+                first_chunk = None
+
+            if first_chunk is not None:
+                cancel_callback()
+
+                with wave.open(
+                    audio_buffer,
+                    "wb",
+                ) as wav_file:
+                    wav_file.setframerate(
+                        first_chunk.sample_rate
+                    )
+                    wav_file.setsampwidth(
+                        first_chunk.sample_width
+                    )
+                    wav_file.setnchannels(
+                        first_chunk.sample_channels
+                    )
+
+                    wav_file.writeframes(
+                        first_chunk.audio_int16_bytes
+                    )
+
+                    while True:
+                        cancel_callback()
+
+                        try:
+                            audio_chunk = next(
+                                audio_chunks
+                            )
+                        except StopIteration:
+                            break
+
+                        cancel_callback()
+
+                        wav_file.writeframes(
+                            audio_chunk.audio_int16_bytes
+                        )
 
         audio_bytes = (
             audio_buffer.getvalue()
@@ -329,6 +389,64 @@ def synthesize_wav(
         raise RuntimeError(
             "Piper did not produce a valid WAV file."
         )
+
+    return audio_bytes
+
+
+def synthesize_with_optional_cancellation(
+    synthesizer: Callable[..., bytes],
+    text: str,
+    speed: float,
+    *,
+    voice_name: str | None = None,
+    cancel_callback: Callable[[], None] | None = None,
+) -> bytes:
+    """Call a synthesizer while preserving legacy test doubles."""
+    if cancel_callback is None:
+        return synthesizer(
+            text,
+            speed,
+            voice_name=voice_name,
+        )
+
+    try:
+        from inspect import Parameter, signature
+
+        parameters = signature(
+            synthesizer
+        ).parameters.values()
+
+        accepts_cancellation = any(
+            parameter.name == "cancel_callback"
+            or parameter.kind
+            == Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        accepts_cancellation = (
+            synthesizer is synthesize_wav
+        )
+
+    if accepts_cancellation:
+        return synthesizer(
+            text,
+            speed,
+            voice_name=voice_name,
+            cancel_callback=cancel_callback,
+        )
+
+    cancel_callback()
+
+    audio_bytes = synthesizer(
+        text,
+        speed,
+        voice_name=voice_name,
+    )
+
+    cancel_callback()
 
     return audio_bytes
 
