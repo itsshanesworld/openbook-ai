@@ -2,7 +2,7 @@
 
 from app.audiobook_queue import (
     get_queue_position,
-    run_audiobook_queue,
+    start_audiobook_queue,
 )
 from pathlib import Path
 from typing import Annotated
@@ -516,7 +516,7 @@ def create_audiobook_job(
         )
 
     background_tasks.add_task(
-        run_audiobook_queue
+        start_audiobook_queue
     )
 
     return serialize_job(job, book, session)

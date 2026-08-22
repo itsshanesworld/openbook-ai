@@ -591,14 +591,73 @@ def ensure_available_disk_space(
     )
 
 
-def recover_interrupted_audiobook_jobs() -> None:
-    """Mark interrupted jobs as failed after restart."""
+def get_interrupted_job_artifact_paths(
+    job: AudiobookJob,
+) -> list[Path]:
+    """Return files that may be partial after interrupted generation."""
+    if not job.output_path:
+        return []
+
+    output_path = Path(
+        job.output_path
+    )
+
+    try:
+        parent = output_path.parent.resolve()
+    except OSError:
+        return []
+
+    if parent != AUDIOBOOK_DIRECTORY.resolve():
+        return []
+
+    mp3_path = output_path.with_suffix(
+        ".mp3"
+    )
+
+    m4b_path = output_path.with_suffix(
+        ".m4b"
+    )
+
+    return [
+        output_path,
+        get_temporary_output_path(
+            output_path
+        ),
+        mp3_path,
+        mp3_path.with_name(
+            f".{mp3_path.stem}.direct-temporary.mp3"
+        ),
+        m4b_path,
+        m4b_path.with_name(
+            f".{m4b_path.stem}.direct-audio.m4a"
+        ),
+        m4b_path.with_name(
+            f".{m4b_path.stem}.direct-metadata.ffmeta"
+        ),
+        m4b_path.with_name(
+            f".{m4b_path.stem}.direct-temporary.m4b"
+        ),
+    ]
+
+
+def recover_interrupted_audiobook_jobs() -> dict[str, int]:
+    """Recover audiobook jobs left active by a stopped backend."""
+    summary = {
+        "failed_jobs": 0,
+        "cancelled_jobs": 0,
+        "files_removed": 0,
+        "cleanup_errors": 0,
+    }
+
     with Session(engine) as session:
         statement = select(
             AudiobookJob
         ).where(
             AudiobookJob.status.in_(
-                ["queued", "running"]
+                [
+                    "running",
+                    "cancelling",
+                ]
             )
         )
 
@@ -607,22 +666,64 @@ def recover_interrupted_audiobook_jobs() -> None:
         ).all()
 
         for job in interrupted_jobs:
+            original_status = job.status
+
             if job.id is not None:
                 delete_job_timings(
                     session,
                     job.id,
                 )
 
-            job.status = "failed"
-            job.error_message = (
-                "Generation was interrupted because "
-                "the backend stopped or restarted."
-            )
+            for artifact_path in (
+                get_interrupted_job_artifact_paths(
+                    job
+                )
+            ):
+                existed = artifact_path.exists()
+
+                try:
+                    artifact_path.unlink(
+                        missing_ok=True
+                    )
+                except OSError:
+                    summary[
+                        "cleanup_errors"
+                    ] += 1
+                else:
+                    if existed:
+                        summary[
+                            "files_removed"
+                        ] += 1
+
+            job.completed_sections = 0
+            job.output_size_bytes = None
+
+            if original_status == "cancelling":
+                job.status = "cancelled"
+                job.error_message = None
+                summary[
+                    "cancelled_jobs"
+                ] += 1
+            else:
+                job.status = "failed"
+                job.error_message = (
+                    "Generation was interrupted because "
+                    "OpenBook AI stopped or restarted. "
+                    "Retry this job to generate it again."
+                )
+                summary[
+                    "failed_jobs"
+                ] += 1
+
             job.updated_at = utc_timestamp()
 
-            session.add(job)
+            session.add(
+                job
+            )
 
         session.commit()
+
+    return summary
 
 
 def delete_job_output(

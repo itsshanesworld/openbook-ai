@@ -1,7 +1,7 @@
 """Sequential execution queue for complete audiobook generation."""
 
 from collections.abc import Callable, Mapping
-from threading import Lock
+from threading import Lock, Thread, current_thread
 from time import sleep
 
 from sqlmodel import Session, select
@@ -17,6 +17,8 @@ _ACTIVE_STATUSES = {
     "cancelling",
 }
 _QUEUE_LOCK = Lock()
+_QUEUE_THREAD_LOCK = Lock()
+_QUEUE_THREAD: Thread | None = None
 _QUEUE_POLL_SECONDS = 0.25
 
 
@@ -123,6 +125,76 @@ def mark_queue_job_failed(
 
         session.add(job)
         session.commit()
+
+
+def has_queued_audiobook_jobs() -> bool:
+    """Return whether persistent queued jobs are waiting."""
+    with Session(engine) as session:
+        return (
+            get_next_queued_job(
+                session
+            )
+            is not None
+        )
+
+
+def _run_audiobook_queue_thread(
+    job_runners: Mapping[str, JobRunner] | None,
+    poll_seconds: float,
+) -> None:
+    """Run the dispatcher and close the thread-state race safely."""
+    global _QUEUE_THREAD
+
+    try:
+        run_audiobook_queue(
+            job_runners=job_runners,
+            poll_seconds=poll_seconds,
+        )
+    finally:
+        with _QUEUE_THREAD_LOCK:
+            if (
+                _QUEUE_THREAD
+                is current_thread()
+            ):
+                _QUEUE_THREAD = None
+
+        # A job may have been enqueued just as the previous
+        # dispatcher observed an empty queue.
+        if has_queued_audiobook_jobs():
+            start_audiobook_queue(
+                job_runners=job_runners,
+                poll_seconds=poll_seconds,
+            )
+
+
+def start_audiobook_queue(
+    job_runners: Mapping[str, JobRunner] | None = None,
+    poll_seconds: float = _QUEUE_POLL_SECONDS,
+) -> Thread:
+    """Ensure one daemon dispatcher is processing queued jobs."""
+    global _QUEUE_THREAD
+
+    with _QUEUE_THREAD_LOCK:
+        if (
+            _QUEUE_THREAD is not None
+            and _QUEUE_THREAD.is_alive()
+        ):
+            return _QUEUE_THREAD
+
+        thread = Thread(
+            target=_run_audiobook_queue_thread,
+            args=(
+                job_runners,
+                poll_seconds,
+            ),
+            name="openbook-audiobook-queue",
+            daemon=True,
+        )
+
+        _QUEUE_THREAD = thread
+        thread.start()
+
+        return thread
 
 
 def run_audiobook_queue(

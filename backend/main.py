@@ -6,6 +6,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.audiobook_queue import (
+    start_audiobook_queue,
+)
 from app.audiobook_service import (
     recover_interrupted_audiobook_jobs,
 )
@@ -20,6 +23,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Initialize persistent application resources."""
     create_database_tables()
     recover_interrupted_audiobook_jobs()
+    start_audiobook_queue()
     yield
 
 
