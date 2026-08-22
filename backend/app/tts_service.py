@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import os
+import re
 import threading
 import wave
 from io import BytesIO
@@ -281,6 +282,187 @@ def synthesize_wav_preview(
     )
 
 
+CANCELLABLE_SYNTHESIS_MAX_CHARS = 120
+_CANCELLABLE_BREAK_MINIMUM_RATIO = 0.55
+
+
+def _split_speech_sentences(
+    text: str,
+) -> list[str]:
+    """Split normalized speech while retaining sentence punctuation."""
+    sentences: list[str] = []
+    start = 0
+
+    pattern = re.compile(
+        r'[.!?](?:["”’)\]]+)?(?:\s+|$)'
+    )
+
+    for match in pattern.finditer(
+        text
+    ):
+        sentence = text[
+            start:match.end()
+        ].strip()
+
+        if sentence:
+            sentences.append(
+                sentence
+            )
+
+        start = match.end()
+
+    remaining = text[
+        start:
+    ].strip()
+
+    if remaining:
+        sentences.append(
+            remaining
+        )
+
+    return sentences
+
+
+def _split_long_speech_piece(
+    text: str,
+    maximum_chars: int,
+) -> list[str]:
+    """Split one long sentence at natural boundaries."""
+    remaining = text.strip()
+    pieces: list[str] = []
+
+    minimum_break = max(
+        1,
+        int(
+            maximum_chars
+            * _CANCELLABLE_BREAK_MINIMUM_RATIO
+        ),
+    )
+
+    while len(
+        remaining
+    ) > maximum_chars:
+        window = remaining[
+            : maximum_chars + 1
+        ]
+
+        break_index = -1
+
+        for match in re.finditer(
+            r'[,;:—–]\s+',
+            window,
+        ):
+            if match.end() >= minimum_break:
+                break_index = match.end()
+
+        if break_index < 0:
+            space_index = window.rfind(
+                " ",
+                minimum_break,
+            )
+
+            if space_index >= minimum_break:
+                break_index = (
+                    space_index + 1
+                )
+
+        if break_index < 0:
+            space_index = window.rfind(
+                " "
+            )
+
+            if space_index > 0:
+                break_index = (
+                    space_index + 1
+                )
+
+        if break_index < 0:
+            break_index = maximum_chars
+
+        piece = remaining[
+            :break_index
+        ].strip()
+
+        if not piece:
+            raise RuntimeError(
+                "Could not split a long Piper synthesis sentence."
+            )
+
+        pieces.append(
+            piece
+        )
+
+        remaining = remaining[
+            break_index:
+        ].strip()
+
+    if remaining:
+        pieces.append(
+            remaining
+        )
+
+    return pieces
+
+
+def split_cancellable_speech_text(
+    text: str,
+    maximum_chars: int = CANCELLABLE_SYNTHESIS_MAX_CHARS,
+) -> list[str]:
+    """Return Piper input groups with long sentences isolated and split."""
+    if maximum_chars < 20:
+        raise ValueError(
+            "The cancellable synthesis limit must be at least 20 characters."
+        )
+
+    normalized = normalize_speech_text(
+        text
+    )
+
+    sentences = _split_speech_sentences(
+        normalized
+    )
+
+    if not sentences:
+        return []
+
+    synthesis_groups: list[str] = []
+    ordinary_sentences: list[str] = []
+
+    def flush_ordinary_sentences() -> None:
+        if not ordinary_sentences:
+            return
+
+        synthesis_groups.append(
+            " ".join(
+                ordinary_sentences
+            )
+        )
+
+        ordinary_sentences.clear()
+
+    for sentence in sentences:
+        if len(
+            sentence
+        ) <= maximum_chars:
+            ordinary_sentences.append(
+                sentence
+            )
+            continue
+
+        flush_ordinary_sentences()
+
+        synthesis_groups.extend(
+            _split_long_speech_piece(
+                sentence,
+                maximum_chars,
+            )
+        )
+
+    flush_ordinary_sentences()
+
+    return synthesis_groups
+
+
 def synthesize_wav(
     text: str,
     speed: float,
@@ -326,12 +508,36 @@ def synthesize_wav(
                     syn_config=synthesis_config,
                 )
         else:
-            audio_chunks = iter(
-                voice.synthesize(
-                    speech_text,
-                    syn_config=synthesis_config,
+            synthesis_groups = (
+                split_cancellable_speech_text(
+                    speech_text
                 )
             )
+
+            def iter_audio_chunks():
+                for synthesis_group in synthesis_groups:
+                    group_chunks = iter(
+                        voice.synthesize(
+                            synthesis_group,
+                            syn_config=synthesis_config,
+                        )
+                    )
+
+                    while True:
+                        cancel_callback()
+
+                        try:
+                            audio_chunk = next(
+                                group_chunks
+                            )
+                        except StopIteration:
+                            break
+
+                        cancel_callback()
+
+                        yield audio_chunk
+
+            audio_chunks = iter_audio_chunks()
 
             cancel_callback()
 
@@ -363,18 +569,7 @@ def synthesize_wav(
                         first_chunk.audio_int16_bytes
                     )
 
-                    while True:
-                        cancel_callback()
-
-                        try:
-                            audio_chunk = next(
-                                audio_chunks
-                            )
-                        except StopIteration:
-                            break
-
-                        cancel_callback()
-
+                    for audio_chunk in audio_chunks:
                         wav_file.writeframes(
                             audio_chunk.audio_int16_bytes
                         )
