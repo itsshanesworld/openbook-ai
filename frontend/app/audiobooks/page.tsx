@@ -197,6 +197,19 @@ type JobFormatFilter =
   | "mp3"
   | "m4b";
 
+type JobAvailabilityFilter =
+  | "all"
+  | "playable"
+  | "wav"
+  | "mp3"
+  | "m4b";
+
+type JobSortOrder =
+  | "newest"
+  | "oldest"
+  | "title"
+  | "size";
+
 interface ErrorResponse {
   detail?: string | Array<{ msg?: string }>;
 }
@@ -303,6 +316,32 @@ function getErrorMessage(
 
 const JOB_HISTORY_PAGE_SIZE = 5;
 
+
+function getStoredAudioBytes(
+  job: AudiobookJob,
+): number {
+  const wavBytes =
+    job.wav_available
+      ? (job.output_size_bytes ?? 0)
+      : 0;
+
+  const mp3Bytes =
+    job.mp3?.available
+      ? (job.mp3.size_bytes ?? 0)
+      : 0;
+
+  const m4bBytes =
+    job.m4b?.available
+      ? (job.m4b.size_bytes ?? 0)
+      : 0;
+
+  return (
+    wavBytes
+    + mp3Bytes
+    + m4bBytes
+  );
+}
+
 export default function AudiobooksPage() {
   const [books, setBooks] = useState<BookSummary[]>([]);
   const [bookId, setBookId] = useState<number | null>(null);
@@ -351,6 +390,14 @@ export default function AudiobooksPage() {
     useState<JobStatusFilter>("all");
   const [jobFormatFilter, setJobFormatFilter] =
     useState<JobFormatFilter>("all");
+  const [jobBookFilter, setJobBookFilter] =
+    useState("all");
+  const [
+    jobAvailabilityFilter,
+    setJobAvailabilityFilter,
+  ] = useState<JobAvailabilityFilter>("all");
+  const [jobSortOrder, setJobSortOrder] =
+    useState<JobSortOrder>("newest");
   const [visibleJobCount, setVisibleJobCount] =
     useState(JOB_HISTORY_PAGE_SIZE);
 
@@ -368,78 +415,201 @@ export default function AudiobooksPage() {
         jobs
           .filter(
             (job) =>
+              job.book_id === bookId &&
+              (
+                job.status === "queued" ||
+                job.status === "running" ||
+                job.status === "cancelling"
+              ),
+          )
+          .map((job) => job.output_format),
+      ),
+    [
+      bookId,
+      jobs,
+    ],
+  );
+
+  const activeFormatKeys = useMemo(
+    () =>
+      new Set(
+        jobs
+          .filter(
+            (job) =>
               job.status === "queued" ||
               job.status === "running" ||
               job.status === "cancelling",
           )
-          .map((job) => job.output_format),
+          .map(
+            (job) =>
+              `${job.book_id}:${job.output_format ?? "legacy"}`,
+          ),
       ),
     [jobs],
   );
+
+  function isJobOutputFormatActive(
+    job: AudiobookJob,
+  ): boolean {
+    if (!job.output_format) {
+      return false;
+    }
+
+    return activeFormatKeys.has(
+      `${job.book_id}:${job.output_format}`,
+    );
+  }
 
 
   const filteredJobs = useMemo(() => {
     const normalizedSearch =
       jobSearch.trim().toLowerCase();
 
-    return jobs.filter((job) => {
-      let statusMatches: boolean;
+    const matchingJobs = jobs.filter(
+      (job) => {
+        let statusMatches: boolean;
 
-      switch (jobStatusFilter) {
-        case "all":
-          statusMatches = true;
-          break;
+        switch (jobStatusFilter) {
+          case "all":
+            statusMatches = true;
+            break;
 
-        case "active":
-          statusMatches =
-            job.status === "queued" ||
-            job.status === "running" ||
-            job.status === "cancelling";
-          break;
+          case "active":
+            statusMatches =
+              job.status === "queued" ||
+              job.status === "running" ||
+              job.status === "cancelling";
+            break;
 
-        default:
-          statusMatches =
-            job.status === jobStatusFilter;
-      }
+          default:
+            statusMatches =
+              job.status === jobStatusFilter;
+        }
 
-      const formatMatches =
-        jobFormatFilter === "all" ||
-        job.output_format === jobFormatFilter;
+        const generationFormatMatches =
+          jobFormatFilter === "all" ||
+          job.output_format ===
+            jobFormatFilter;
 
-      if (!statusMatches || !formatMatches) {
-        return false;
-      }
+        const bookMatches =
+          jobBookFilter === "all" ||
+          String(job.book_id) ===
+            jobBookFilter;
 
-      if (!normalizedSearch) {
-        return true;
-      }
+        let availabilityMatches: boolean;
 
-      const narratorName =
-        voices.find(
-          (installedVoice) =>
-            installedVoice.id === job.voice,
-        )?.name ?? job.voice;
+        switch (
+          jobAvailabilityFilter
+        ) {
+          case "playable":
+            availabilityMatches =
+              job.wav_available ||
+              job.mp3?.available ||
+              job.m4b?.available;
+            break;
 
-      const searchableText = [
-        String(job.id),
-        job.book_title,
-        job.book_author ?? "",
-        job.book_filename,
-        narratorName,
-        job.voice,
-        job.status,
-        job.output_format ?? "legacy",
-      ]
-        .join(" ")
-        .toLowerCase();
+          case "wav":
+            availabilityMatches =
+              job.wav_available;
+            break;
 
-      return searchableText.includes(
-        normalizedSearch,
-      );
-    });
+          case "mp3":
+            availabilityMatches =
+              job.mp3?.available ?? false;
+            break;
+
+          case "m4b":
+            availabilityMatches =
+              job.m4b?.available ?? false;
+            break;
+
+          default:
+            availabilityMatches = true;
+        }
+
+        if (
+          !statusMatches ||
+          !generationFormatMatches ||
+          !bookMatches ||
+          !availabilityMatches
+        ) {
+          return false;
+        }
+
+        if (!normalizedSearch) {
+          return true;
+        }
+
+        const narratorName =
+          voices.find(
+            (installedVoice) =>
+              installedVoice.id ===
+              job.voice,
+          )?.name ?? job.voice;
+
+        const searchableText = [
+          String(job.id),
+          job.book_title,
+          job.book_author ?? "",
+          job.book_filename,
+          narratorName,
+          job.voice,
+          job.status,
+          job.output_format ?? "legacy",
+        ]
+          .join(" ")
+          .toLowerCase();
+
+        return searchableText.includes(
+          normalizedSearch,
+        );
+      },
+    );
+
+    return matchingJobs.sort(
+      (left, right) => {
+        switch (jobSortOrder) {
+          case "oldest":
+            return left.id - right.id;
+
+          case "title": {
+            const titleComparison =
+              left.book_title.localeCompare(
+                right.book_title,
+                undefined,
+                {
+                  sensitivity: "base",
+                },
+              );
+
+            return (
+              titleComparison ||
+              right.id - left.id
+            );
+          }
+
+          case "size": {
+            const sizeComparison =
+              getStoredAudioBytes(right) -
+              getStoredAudioBytes(left);
+
+            return (
+              sizeComparison ||
+              right.id - left.id
+            );
+          }
+
+          default:
+            return right.id - left.id;
+        }
+      },
+    );
   }, [
+    jobAvailabilityFilter,
+    jobBookFilter,
     jobFormatFilter,
     jobSearch,
+    jobSortOrder,
     jobs,
     jobStatusFilter,
     voices,
@@ -448,7 +618,23 @@ export default function AudiobooksPage() {
   const jobFiltersActive =
     jobSearch.trim() !== "" ||
     jobStatusFilter !== "all" ||
-    jobFormatFilter !== "all";
+    jobFormatFilter !== "all" ||
+    jobBookFilter !== "all" ||
+    jobAvailabilityFilter !== "all";
+
+  const jobControlsModified =
+    jobFiltersActive ||
+    jobSortOrder !== "newest";
+
+
+  function clearJobLibraryControls(): void {
+    setJobSearch("");
+    setJobStatusFilter("all");
+    setJobFormatFilter("all");
+    setJobBookFilter("all");
+    setJobAvailabilityFilter("all");
+    setJobSortOrder("newest");
+  }
 
 
   const visibleJobs = useMemo(
@@ -473,9 +659,11 @@ export default function AudiobooksPage() {
       JOB_HISTORY_PAGE_SIZE,
     );
   }, [
-    bookId,
+    jobAvailabilityFilter,
+    jobBookFilter,
     jobFormatFilter,
     jobSearch,
+    jobSortOrder,
     jobStatusFilter,
   ]);
 
@@ -587,17 +775,12 @@ export default function AudiobooksPage() {
   ]);
 
   const loadJobs = useCallback(async (): Promise<void> => {
-    if (!bookId) {
-      setJobs([]);
-      return;
-    }
-
     const nextJobs = await requestJson<AudiobookJob[]>(
-      `${API_URL}/books/${bookId}/audiobook-jobs`,
+      `${API_URL}/audiobook-jobs`,
     );
 
     setJobs(nextJobs);
-  }, [bookId]);
+  }, []);
 
   useEffect(() => {
     async function initialize(): Promise<void> {
@@ -675,19 +858,18 @@ export default function AudiobooksPage() {
   }, []);
 
   useEffect(() => {
-    if (!bookId) {
-      setJobs([]);
-      return;
-    }
-
     void loadJobs();
 
-    const interval = window.setInterval(() => {
-      void loadJobs();
-    }, 2000);
+    const interval = window.setInterval(
+      () => {
+        void loadJobs();
+      },
+      2000,
+    );
 
-    return () => window.clearInterval(interval);
-  }, [bookId, loadJobs]);
+    return () =>
+      window.clearInterval(interval);
+  }, [loadJobs]);
 
   function clearVoicePreview(): void {
     if (voicePreviewUrlRef.current) {
@@ -2208,7 +2390,7 @@ export default function AudiobooksPage() {
           <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-bold">
-                Generated audiobooks
+                Audiobook library
               </h2>
 
               <span className="rounded-full bg-slate-800 px-3 py-1 text-sm">
@@ -2220,26 +2402,39 @@ export default function AudiobooksPage() {
 
             {jobs.length === 0 && (
               <p className="mt-5 text-slate-400">
-                Your audiobook jobs will appear here.
+                Generated audiobooks from every book will appear here.
               </p>
             )}
 
             {jobs.length > 0 && (
               <div className="mt-5 rounded-xl border border-slate-800 bg-slate-950/50 p-4">
-                <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_160px_auto]">
-                  <div>
+                <div>
+                  <p className="text-sm font-semibold text-slate-200">
+                    Search, filter, and sort your audiobook library
+                  </p>
+
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    Audiobook jobs from every book appear here. The
+                    book selected above still controls new generation.
+                  </p>
+                </div>
+
+                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-7">
+                  <div className="xl:col-span-2">
                     <label
                       className="text-xs font-semibold uppercase tracking-wide text-slate-500"
                       htmlFor="job-history-search"
                     >
-                      Search audiobook jobs
+                      Search
                     </label>
 
                     <input
                       className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400"
                       id="job-history-search"
                       onChange={(event) =>
-                        setJobSearch(event.target.value)
+                        setJobSearch(
+                          event.target.value,
+                        )
                       }
                       placeholder="Title, author, narrator, file, or job ID"
                       type="search"
@@ -2250,17 +2445,64 @@ export default function AudiobooksPage() {
                   <div>
                     <label
                       className="text-xs font-semibold uppercase tracking-wide text-slate-500"
-                      htmlFor="job-status-filter"
+                      htmlFor="job-history-book"
+                    >
+                      Book
+                    </label>
+
+                    <select
+                      className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400"
+                      id="job-history-book"
+                      onChange={(event) =>
+                        setJobBookFilter(
+                          event.target.value,
+                        )
+                      }
+                      value={jobBookFilter}
+                    >
+                      <option value="all">
+                        All books
+                      </option>
+
+                      {[...books]
+                        .sort(
+                          (left, right) =>
+                            left.display_title.localeCompare(
+                              right.display_title,
+                              undefined,
+                              {
+                                sensitivity: "base",
+                              },
+                            ),
+                        )
+                        .map((book) => (
+                          <option
+                            key={book.id}
+                            value={String(
+                              book.id,
+                            )}
+                          >
+                            {book.display_title}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label
+                      className="text-xs font-semibold uppercase tracking-wide text-slate-500"
+                      htmlFor="job-history-status"
                     >
                       Status
                     </label>
 
                     <select
                       className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400"
-                      id="job-status-filter"
+                      id="job-history-status"
                       onChange={(event) =>
                         setJobStatusFilter(
-                          event.target.value as JobStatusFilter,
+                          event.target
+                            .value as JobStatusFilter,
                         )
                       }
                       value={jobStatusFilter}
@@ -2286,17 +2528,18 @@ export default function AudiobooksPage() {
                   <div>
                     <label
                       className="text-xs font-semibold uppercase tracking-wide text-slate-500"
-                      htmlFor="job-format-filter"
+                      htmlFor="job-history-format"
                     >
-                      Format
+                      Generation format
                     </label>
 
                     <select
                       className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400"
-                      id="job-format-filter"
+                      id="job-history-format"
                       onChange={(event) =>
                         setJobFormatFilter(
-                          event.target.value as JobFormatFilter,
+                          event.target
+                            .value as JobFormatFilter,
                         )
                       }
                       value={jobFormatFilter}
@@ -2316,24 +2559,82 @@ export default function AudiobooksPage() {
                     </select>
                   </div>
 
-                  <div className="flex items-end">
-                    <button
-                      className="w-full rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 disabled:cursor-not-allowed disabled:opacity-40 lg:w-auto"
-                      disabled={!jobFiltersActive}
-                      onClick={() => {
-                        setJobSearch("");
-                        setJobStatusFilter("all");
-                        setJobFormatFilter("all");
-                      }}
-                      type="button"
+                  <div>
+                    <label
+                      className="text-xs font-semibold uppercase tracking-wide text-slate-500"
+                      htmlFor="job-history-availability"
                     >
-                      Clear filters
-                    </button>
+                      Stored audio
+                    </label>
+
+                    <select
+                      className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400"
+                      id="job-history-availability"
+                      onChange={(event) =>
+                        setJobAvailabilityFilter(
+                          event.target
+                            .value as JobAvailabilityFilter,
+                        )
+                      }
+                      value={
+                        jobAvailabilityFilter
+                      }
+                    >
+                      <option value="all">
+                        All
+                      </option>
+                      <option value="playable">
+                        Any playable
+                      </option>
+                      <option value="wav">
+                        WAV stored
+                      </option>
+                      <option value="mp3">
+                        MP3 stored
+                      </option>
+                      <option value="m4b">
+                        M4B stored
+                      </option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label
+                      className="text-xs font-semibold uppercase tracking-wide text-slate-500"
+                      htmlFor="job-history-sort"
+                    >
+                      Sort
+                    </label>
+
+                    <select
+                      className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400"
+                      id="job-history-sort"
+                      onChange={(event) =>
+                        setJobSortOrder(
+                          event.target
+                            .value as JobSortOrder,
+                        )
+                      }
+                      value={jobSortOrder}
+                    >
+                      <option value="newest">
+                        Newest first
+                      </option>
+                      <option value="oldest">
+                        Oldest first
+                      </option>
+                      <option value="title">
+                        Title A–Z
+                      </option>
+                      <option value="size">
+                        Largest stored audio
+                      </option>
+                    </select>
                   </div>
                 </div>
 
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
-                  <span>
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                  <div className="text-xs text-slate-500">
                     Showing{" "}
                     <strong className="text-slate-300">
                       {visibleJobs.length.toLocaleString()}
@@ -2347,6 +2648,7 @@ export default function AudiobooksPage() {
                       : filteredJobs.length === 1
                         ? "job"
                         : "jobs"}
+
                     {jobFiltersActive && (
                       <>
                         {" "}·{" "}
@@ -2356,13 +2658,20 @@ export default function AudiobooksPage() {
                         total
                       </>
                     )}
-                  </span>
+                  </div>
 
-                  {jobFiltersActive && (
-                    <span>
-                      Filters update automatically as jobs change.
-                    </span>
-                  )}
+                  <button
+                    className="rounded-lg border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-300 disabled:cursor-not-allowed disabled:opacity-40"
+                    disabled={
+                      !jobControlsModified
+                    }
+                    onClick={
+                      clearJobLibraryControls
+                    }
+                    type="button"
+                  >
+                    Reset library view
+                  </button>
                 </div>
               </div>
             )}
@@ -2377,11 +2686,7 @@ export default function AudiobooksPage() {
 
                   <button
                     className="mt-3 font-semibold text-cyan-300"
-                    onClick={() => {
-                      setJobSearch("");
-                      setJobStatusFilter("all");
-                      setJobFormatFilter("all");
-                    }}
+                    onClick={clearJobLibraryControls}
                     type="button"
                   >
                     Clear filters
@@ -2778,9 +3083,7 @@ export default function AudiobooksPage() {
                           className="rounded-lg border border-blue-400/40 bg-blue-500/10 px-4 py-2 text-sm font-semibold text-blue-200 disabled:cursor-not-allowed disabled:opacity-40"
                           disabled={
                             retryingJobId === job.id ||
-                            activeFormats.has(
-                              job.output_format,
-                            )
+                            isJobOutputFormatActive(job)
                           }
                           onClick={() =>
                             void retryAudiobook(job)

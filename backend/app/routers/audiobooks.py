@@ -640,6 +640,42 @@ def cancel_audiobook_job(
     )
 
 
+@router.get("/audiobook-jobs")
+def list_all_audiobook_jobs(
+    session: DatabaseSession,
+) -> list[dict[str, object]]:
+    """Return audiobook jobs across the entire book library."""
+    jobs = session.exec(
+        select(AudiobookJob)
+        .order_by(
+            AudiobookJob.created_at.desc()
+        )
+    ).all()
+
+    serialized_jobs: list[
+        dict[str, object]
+    ] = []
+
+    for job in jobs:
+        book = session.get(
+            Book,
+            job.book_id,
+        )
+
+        if book is None:
+            continue
+
+        serialized_jobs.append(
+            serialize_job(
+                job,
+                book,
+                session,
+            )
+        )
+
+    return serialized_jobs
+
+
 @router.get("/books/{book_id}/audiobook-jobs")
 def list_audiobook_jobs(
     book_id: int,
