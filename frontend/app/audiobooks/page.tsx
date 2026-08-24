@@ -3,6 +3,7 @@
 import Link from "next/link";
 import {
   ReactNode,
+  RefObject,
   useCallback,
   useEffect,
   useMemo,
@@ -2514,10 +2515,9 @@ export default function AudiobooksPage() {
 
                         {job.wav_available ? (
                           <>
-                            <audio
+                            <ResumeAudioPlayer
                               className="mt-3 w-full"
-                              controls
-                              preload="metadata"
+                              jobId={job.id}
                               src={`${API_URL}/audiobook-jobs/${job.id}/audio`}
                             />
 
@@ -2569,10 +2569,9 @@ export default function AudiobooksPage() {
                           </button>
                         ) : (
                           <>
-                            <audio
+                            <ResumeAudioPlayer
                               className="mt-3 w-full"
-                              controls
-                              preload="metadata"
+                              jobId={job.id}
                               src={`${API_URL}/audiobook-jobs/${job.id}/audio/mp3`}
                             />
 
@@ -2848,6 +2847,323 @@ export default function AudiobooksPage() {
   );
 }
 
+const PLAYBACK_STORAGE_PREFIX =
+  "openbook-audiobook-playback-v1";
+const PLAYBACK_RESUME_MIN_SECONDS = 10;
+const PLAYBACK_FINISH_MARGIN_SECONDS = 15;
+const PLAYBACK_SAVE_INTERVAL_SECONDS = 5;
+
+
+function getPlaybackStorageKey(
+  jobId: number,
+): string {
+  return `${PLAYBACK_STORAGE_PREFIX}:${jobId}`;
+}
+
+
+function readPlaybackPosition(
+  jobId: number,
+): number | null {
+  try {
+    const value = window.localStorage.getItem(
+      getPlaybackStorageKey(jobId),
+    );
+
+    if (value === null) {
+      return null;
+    }
+
+    const parsed = Number(value);
+
+    if (
+      !Number.isFinite(parsed) ||
+      parsed < PLAYBACK_RESUME_MIN_SECONDS
+    ) {
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+
+function clearPlaybackPosition(
+  jobId: number,
+): void {
+  try {
+    window.localStorage.removeItem(
+      getPlaybackStorageKey(jobId),
+    );
+  } catch {
+    // Resume playback remains optional without browser storage.
+  }
+}
+
+
+function storePlaybackPosition(
+  jobId: number,
+  currentTime: number,
+  duration: number,
+): boolean {
+  if (
+    !Number.isFinite(currentTime) ||
+    !Number.isFinite(duration) ||
+    duration <= 0 ||
+    currentTime < PLAYBACK_RESUME_MIN_SECONDS ||
+    currentTime >=
+      duration - PLAYBACK_FINISH_MARGIN_SECONDS
+  ) {
+    clearPlaybackPosition(jobId);
+    return false;
+  }
+
+  try {
+    window.localStorage.setItem(
+      getPlaybackStorageKey(jobId),
+      currentTime.toFixed(3),
+    );
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+
+function formatPlaybackPosition(
+  totalSeconds: number,
+): string {
+  const secondsTotal = Math.max(
+    0,
+    Math.floor(totalSeconds),
+  );
+
+  const hours = Math.floor(
+    secondsTotal / 3600,
+  );
+
+  const minutes = Math.floor(
+    (secondsTotal % 3600) / 60,
+  );
+
+  const seconds =
+    secondsTotal % 60;
+
+  if (hours > 0) {
+    return [
+      hours,
+      minutes.toString().padStart(2, "0"),
+      seconds.toString().padStart(2, "0"),
+    ].join(":");
+  }
+
+  return [
+    minutes,
+    seconds.toString().padStart(2, "0"),
+  ].join(":");
+}
+
+
+function ResumeAudioPlayer({
+  audioRef,
+  className,
+  jobId,
+  src,
+}: {
+  audioRef?: RefObject<HTMLAudioElement | null>;
+  className: string;
+  jobId: number;
+  src: string;
+}) {
+  const internalAudioRef =
+    useRef<HTMLAudioElement | null>(null);
+
+  const playerRef =
+    audioRef ?? internalAudioRef;
+
+  const restoredForJobRef =
+    useRef<number | null>(null);
+
+  const lastSavedBucketRef =
+    useRef(-1);
+
+  const [
+    restoredPosition,
+    setRestoredPosition,
+  ] = useState<number | null>(null);
+
+  const [
+    positionSaved,
+    setPositionSaved,
+  ] = useState(false);
+
+
+  useEffect(() => {
+    restoredForJobRef.current = null;
+    lastSavedBucketRef.current = -1;
+    setRestoredPosition(null);
+    setPositionSaved(false);
+  }, [jobId]);
+
+
+  function savePosition(
+    audio: HTMLAudioElement,
+  ): void {
+    const saved = storePlaybackPosition(
+      jobId,
+      audio.currentTime,
+      audio.duration,
+    );
+
+    setPositionSaved(saved);
+
+    if (!saved) {
+      setRestoredPosition(null);
+    }
+  }
+
+
+  function handleLoadedMetadata(
+    audio: HTMLAudioElement,
+  ): void {
+    if (
+      restoredForJobRef.current === jobId
+    ) {
+      return;
+    }
+
+    restoredForJobRef.current = jobId;
+
+    const savedPosition =
+      readPlaybackPosition(jobId);
+
+    if (
+      savedPosition === null ||
+      !Number.isFinite(audio.duration) ||
+      audio.duration <= 0 ||
+      savedPosition >=
+        audio.duration -
+          PLAYBACK_FINISH_MARGIN_SECONDS
+    ) {
+      clearPlaybackPosition(jobId);
+      setRestoredPosition(null);
+      setPositionSaved(false);
+      return;
+    }
+
+    audio.currentTime = savedPosition;
+
+    lastSavedBucketRef.current =
+      Math.floor(
+        savedPosition /
+          PLAYBACK_SAVE_INTERVAL_SECONDS,
+      );
+
+    setRestoredPosition(
+      savedPosition,
+    );
+
+    setPositionSaved(true);
+  }
+
+
+  function handleTimeUpdate(
+    audio: HTMLAudioElement,
+  ): void {
+    const bucket = Math.floor(
+      audio.currentTime /
+        PLAYBACK_SAVE_INTERVAL_SECONDS,
+    );
+
+    if (
+      bucket === lastSavedBucketRef.current
+    ) {
+      return;
+    }
+
+    lastSavedBucketRef.current =
+      bucket;
+
+    savePosition(audio);
+  }
+
+
+  function handleImmediateSave(
+    audio: HTMLAudioElement,
+  ): void {
+    lastSavedBucketRef.current =
+      Math.floor(
+        audio.currentTime /
+          PLAYBACK_SAVE_INTERVAL_SECONDS,
+      );
+
+    savePosition(audio);
+  }
+
+
+  function handleEnded(): void {
+    clearPlaybackPosition(jobId);
+
+    lastSavedBucketRef.current = -1;
+
+    setRestoredPosition(null);
+    setPositionSaved(false);
+  }
+
+
+  return (
+    <>
+      <audio
+        className={className}
+        controls
+        onEnded={handleEnded}
+        onLoadedMetadata={(event) =>
+          handleLoadedMetadata(
+            event.currentTarget,
+          )
+        }
+        onPause={(event) =>
+          handleImmediateSave(
+            event.currentTarget,
+          )
+        }
+        onSeeked={(event) =>
+          handleImmediateSave(
+            event.currentTarget,
+          )
+        }
+        onTimeUpdate={(event) =>
+          handleTimeUpdate(
+            event.currentTarget,
+          )
+        }
+        preload="metadata"
+        ref={playerRef}
+        src={src}
+      />
+
+      {restoredPosition !== null ? (
+        <p className="mt-2 text-xs text-emerald-300">
+          Resumed from{" "}
+          {formatPlaybackPosition(
+            restoredPosition,
+          )}
+          . Your position saves automatically
+          on this device.
+        </p>
+      ) : positionSaved ? (
+        <p className="mt-2 text-xs text-slate-400">
+          Playback position saved automatically
+          on this device.
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+
 function M4bPlayer({
   jobId,
 }: {
@@ -2907,11 +3223,10 @@ function M4bPlayer({
 
   return (
     <>
-      <audio
+      <ResumeAudioPlayer
+        audioRef={audioRef}
         className="mt-4 w-full"
-        controls
-        preload="metadata"
-        ref={audioRef}
+        jobId={jobId}
         src={`${API_URL}/audiobook-jobs/${jobId}/audio/m4b`}
       />
 
