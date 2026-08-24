@@ -3019,7 +3019,11 @@ function ResumeAudioPlayer({
 
     setPositionSaved(saved);
 
-    if (!saved) {
+    if (saved) {
+      setRestoredPosition(
+        audio.currentTime,
+      );
+    } else {
       setRestoredPosition(null);
     }
   }
@@ -3103,6 +3107,43 @@ function ResumeAudioPlayer({
   }
 
 
+  function handleResumeFromSaved(): void {
+    const audio = playerRef.current;
+
+    if (
+      audio === null ||
+      restoredPosition === null
+    ) {
+      return;
+    }
+
+    audio.currentTime =
+      restoredPosition;
+
+    lastSavedBucketRef.current =
+      Math.floor(
+        restoredPosition /
+          PLAYBACK_SAVE_INTERVAL_SECONDS,
+      );
+  }
+
+
+  function handleStartOver(): void {
+    const audio = playerRef.current;
+
+    clearPlaybackPosition(jobId);
+
+    lastSavedBucketRef.current = -1;
+
+    setRestoredPosition(null);
+    setPositionSaved(false);
+
+    if (audio !== null) {
+      audio.currentTime = 0;
+    }
+  }
+
+
   function handleEnded(): void {
     clearPlaybackPosition(jobId);
 
@@ -3145,14 +3186,38 @@ function ResumeAudioPlayer({
       />
 
       {restoredPosition !== null ? (
-        <p className="mt-2 text-xs text-emerald-300">
-          Resumed from{" "}
-          {formatPlaybackPosition(
-            restoredPosition,
-          )}
-          . Your position saves automatically
-          on this device.
-        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-emerald-300">
+            Position saved at{" "}
+            {formatPlaybackPosition(
+              restoredPosition,
+            )}
+            .
+          </span>
+
+          <button
+            className="rounded-md border border-emerald-500/60 px-2 py-1 font-medium text-emerald-200 transition hover:bg-emerald-500/10"
+            onClick={
+              handleResumeFromSaved
+            }
+            type="button"
+          >
+            Resume from{" "}
+            {formatPlaybackPosition(
+              restoredPosition,
+            )}
+          </button>
+
+          <button
+            className="rounded-md border border-slate-600 px-2 py-1 font-medium text-slate-300 transition hover:bg-slate-800"
+            onClick={
+              handleStartOver
+            }
+            type="button"
+          >
+            Start over
+          </button>
+        </div>
       ) : positionSaved ? (
         <p className="mt-2 text-xs text-slate-400">
           Playback position saved automatically
