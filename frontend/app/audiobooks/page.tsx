@@ -210,6 +210,10 @@ type JobSortOrder =
   | "title"
   | "size";
 
+type JobPinnedFilter =
+  | "all"
+  | "pinned";
+
 interface ErrorResponse {
   detail?: string | Array<{ msg?: string }>;
 }
@@ -315,6 +319,71 @@ function getErrorMessage(
 }
 
 const JOB_HISTORY_PAGE_SIZE = 5;
+const AUDIOBOOK_PIN_STORAGE_KEY =
+  "openbook-audiobook-pins-v1";
+
+
+function readPinnedAudiobookJobIds(): Set<number> {
+  if (typeof window === "undefined") {
+    return new Set();
+  }
+
+  try {
+    const storedValue =
+      window.localStorage.getItem(
+        AUDIOBOOK_PIN_STORAGE_KEY,
+      );
+
+    if (!storedValue) {
+      return new Set();
+    }
+
+    const parsedValue: unknown =
+      JSON.parse(storedValue);
+
+    if (!Array.isArray(parsedValue)) {
+      return new Set();
+    }
+
+    return new Set(
+      parsedValue.filter(
+        (value): value is number =>
+          typeof value === "number" &&
+          Number.isInteger(value) &&
+          value > 0,
+      ),
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+
+function storePinnedAudiobookJobIds(
+  pinnedJobIds: Set<number>,
+): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    const sortedJobIds = [
+      ...pinnedJobIds,
+    ].sort(
+      (left, right) =>
+        left - right,
+    );
+
+    window.localStorage.setItem(
+      AUDIOBOOK_PIN_STORAGE_KEY,
+      JSON.stringify(
+        sortedJobIds,
+      ),
+    );
+  } catch {
+    // Browser storage can be unavailable in restricted sessions.
+  }
+}
 
 
 function getStoredAudioBytes(
@@ -398,11 +467,57 @@ export default function AudiobooksPage() {
   ] = useState<JobAvailabilityFilter>("all");
   const [jobSortOrder, setJobSortOrder] =
     useState<JobSortOrder>("newest");
+  const [jobPinnedFilter, setJobPinnedFilter] =
+    useState<JobPinnedFilter>("all");
+  const [pinnedJobIds, setPinnedJobIds] =
+    useState<Set<number>>(
+      () => new Set(),
+    );
   const [visibleJobCount, setVisibleJobCount] =
     useState(JOB_HISTORY_PAGE_SIZE);
 
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+
+
+  useEffect(() => {
+    setPinnedJobIds(
+      readPinnedAudiobookJobIds(),
+    );
+  }, []);
+
+
+  function togglePinnedJob(
+    jobId: number,
+  ): void {
+    setPinnedJobIds(
+      (currentPinnedJobIds) => {
+        const nextPinnedJobIds =
+          new Set(
+            currentPinnedJobIds,
+          );
+
+        if (
+          nextPinnedJobIds.has(jobId)
+        ) {
+          nextPinnedJobIds.delete(
+            jobId,
+          );
+        } else {
+          nextPinnedJobIds.add(
+            jobId,
+          );
+        }
+
+        storePinnedAudiobookJobIds(
+          nextPinnedJobIds,
+        );
+
+        return nextPinnedJobIds;
+      },
+    );
+  }
+
 
   const selectedBook = useMemo(
     () => books.find((book) => book.id === bookId) ?? null,
@@ -527,11 +642,16 @@ export default function AudiobooksPage() {
             availabilityMatches = true;
         }
 
+        const pinnedMatches =
+          jobPinnedFilter === "all" ||
+          pinnedJobIds.has(job.id);
+
         if (
           !statusMatches ||
           !generationFormatMatches ||
           !bookMatches ||
-          !availabilityMatches
+          !availabilityMatches ||
+          !pinnedMatches
         ) {
           return false;
         }
@@ -568,6 +688,20 @@ export default function AudiobooksPage() {
 
     return matchingJobs.sort(
       (left, right) => {
+        const leftPinned =
+          pinnedJobIds.has(left.id);
+
+        const rightPinned =
+          pinnedJobIds.has(right.id);
+
+        if (
+          leftPinned !== rightPinned
+        ) {
+          return leftPinned
+            ? -1
+            : 1;
+        }
+
         switch (jobSortOrder) {
           case "oldest":
             return left.id - right.id;
@@ -608,10 +742,12 @@ export default function AudiobooksPage() {
     jobAvailabilityFilter,
     jobBookFilter,
     jobFormatFilter,
+    jobPinnedFilter,
     jobSearch,
     jobSortOrder,
     jobs,
     jobStatusFilter,
+    pinnedJobIds,
     voices,
   ]);
 
@@ -620,7 +756,8 @@ export default function AudiobooksPage() {
     jobStatusFilter !== "all" ||
     jobFormatFilter !== "all" ||
     jobBookFilter !== "all" ||
-    jobAvailabilityFilter !== "all";
+    jobAvailabilityFilter !== "all" ||
+    jobPinnedFilter !== "all";
 
   const jobControlsModified =
     jobFiltersActive ||
@@ -633,6 +770,7 @@ export default function AudiobooksPage() {
     setJobFormatFilter("all");
     setJobBookFilter("all");
     setJobAvailabilityFilter("all");
+    setJobPinnedFilter("all");
     setJobSortOrder("newest");
   }
 
@@ -662,6 +800,7 @@ export default function AudiobooksPage() {
     jobAvailabilityFilter,
     jobBookFilter,
     jobFormatFilter,
+    jobPinnedFilter,
     jobSearch,
     jobSortOrder,
     jobStatusFilter,
@@ -2419,7 +2558,7 @@ export default function AudiobooksPage() {
                   </p>
                 </div>
 
-                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-7">
+                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-8">
                   <div className="xl:col-span-2">
                     <label
                       className="text-xs font-semibold uppercase tracking-wide text-slate-500"
@@ -2601,6 +2740,34 @@ export default function AudiobooksPage() {
                   <div>
                     <label
                       className="text-xs font-semibold uppercase tracking-wide text-slate-500"
+                      htmlFor="job-history-pinned"
+                    >
+                      Pinned
+                    </label>
+
+                    <select
+                      className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400"
+                      id="job-history-pinned"
+                      onChange={(event) =>
+                        setJobPinnedFilter(
+                          event.target
+                            .value as JobPinnedFilter,
+                        )
+                      }
+                      value={jobPinnedFilter}
+                    >
+                      <option value="all">
+                        All
+                      </option>
+                      <option value="pinned">
+                        Pinned only
+                      </option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label
+                      className="text-xs font-semibold uppercase tracking-wide text-slate-500"
                       htmlFor="job-history-sort"
                     >
                       Sort
@@ -2750,7 +2917,39 @@ export default function AudiobooksPage() {
                       </div>
                     </div>
 
-                    <StatusBadge status={job.status} />
+                    <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                      <button
+                        aria-pressed={
+                          pinnedJobIds.has(
+                            job.id,
+                          )
+                        }
+                        className={[
+                          "rounded-lg border px-3 py-2 text-xs font-semibold transition",
+                          pinnedJobIds.has(
+                            job.id,
+                          )
+                            ? "border-amber-400/60 bg-amber-400/10 text-amber-200"
+                            : "border-slate-700 text-slate-300 hover:border-amber-400/60 hover:text-amber-200",
+                        ].join(" ")}
+                        onClick={() =>
+                          togglePinnedJob(
+                            job.id,
+                          )
+                        }
+                        type="button"
+                      >
+                        {pinnedJobIds.has(
+                          job.id,
+                        )
+                          ? "★ Pinned"
+                          : "☆ Pin"}
+                      </button>
+
+                      <StatusBadge
+                        status={job.status}
+                      />
+                    </div>
                   </div>
 
                   <div className="mt-5 h-3 overflow-hidden rounded-full bg-slate-800">
