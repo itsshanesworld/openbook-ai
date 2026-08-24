@@ -2516,7 +2516,10 @@ export default function AudiobooksPage() {
                         {job.wav_available ? (
                           <>
                             <ResumeAudioPlayer
+                              bookAuthor={job.book_author}
+                              bookTitle={job.book_title}
                               className="mt-3 w-full"
+                              format="WAV"
                               jobId={job.id}
                               src={`${API_URL}/audiobook-jobs/${job.id}/audio`}
                             />
@@ -2570,7 +2573,10 @@ export default function AudiobooksPage() {
                         ) : (
                           <>
                             <ResumeAudioPlayer
+                              bookAuthor={job.book_author}
+                              bookTitle={job.book_title}
                               className="mt-3 w-full"
+                              format="MP3"
                               jobId={job.id}
                               src={`${API_URL}/audiobook-jobs/${job.id}/audio/mp3`}
                             />
@@ -2625,7 +2631,11 @@ export default function AudiobooksPage() {
                           </button>
                         ) : (
                           <>
-                            <M4bPlayer jobId={job.id} />
+                            <M4bPlayer
+                              bookAuthor={job.book_author}
+                              bookTitle={job.book_title}
+                              jobId={job.id}
+                            />
 
                             <div className="mt-4 flex flex-wrap items-center gap-4">
                               <a
@@ -2966,19 +2976,43 @@ function formatPlaybackPosition(
 }
 
 
+type NowPlayingFormat =
+  | "WAV"
+  | "MP3"
+  | "M4B";
+
+
+interface NowPlayingEventDetail {
+  playerKey: string;
+}
+
+
+const NOW_PLAYING_EVENT =
+  "openbook-now-playing";
+
+
 function ResumeAudioPlayer({
   audioRef,
+  bookAuthor,
+  bookTitle,
   className,
+  format,
   jobId,
   src,
 }: {
   audioRef?: RefObject<HTMLAudioElement | null>;
+  bookAuthor: string | null;
+  bookTitle: string;
   className: string;
+  format: NowPlayingFormat;
   jobId: number;
   src: string;
 }) {
   const internalAudioRef =
     useRef<HTMLAudioElement | null>(null);
+
+  const playerContainerRef =
+    useRef<HTMLDivElement | null>(null);
 
   const playerRef =
     audioRef ?? internalAudioRef;
@@ -2999,13 +3033,110 @@ function ResumeAudioPlayer({
     setPositionSaved,
   ] = useState(false);
 
+  const [
+    isNowPlaying,
+    setIsNowPlaying,
+  ] = useState(false);
+
+  const [
+    isPlaying,
+    setIsPlaying,
+  ] = useState(false);
+
+  const [
+    currentTime,
+    setCurrentTime,
+  ] = useState(0);
+
+  const [
+    duration,
+    setDuration,
+  ] = useState(0);
+
+  const playerKey =
+    `${jobId}:${format.toLowerCase()}`;
+
 
   useEffect(() => {
     restoredForJobRef.current = null;
     lastSavedBucketRef.current = -1;
+
     setRestoredPosition(null);
     setPositionSaved(false);
-  }, [jobId]);
+    setIsNowPlaying(false);
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setDuration(0);
+  }, [jobId, src]);
+
+
+  useEffect(() => {
+    function handleNowPlaying(
+      event: Event,
+    ): void {
+      const customEvent =
+        event as CustomEvent<NowPlayingEventDetail>;
+
+      if (
+        customEvent.detail.playerKey
+        === playerKey
+      ) {
+        setIsNowPlaying(true);
+        return;
+      }
+
+      setIsNowPlaying(false);
+
+      const audio =
+        playerRef.current;
+
+      if (
+        audio !== null
+        && !audio.paused
+      ) {
+        audio.pause();
+      }
+    }
+
+    window.addEventListener(
+      NOW_PLAYING_EVENT,
+      handleNowPlaying,
+    );
+
+    return () => {
+      window.removeEventListener(
+        NOW_PLAYING_EVENT,
+        handleNowPlaying,
+      );
+    };
+  }, [playerKey, playerRef]);
+
+
+  function updatePlaybackState(
+    audio: HTMLAudioElement,
+  ): void {
+    setCurrentTime(
+      Number.isFinite(
+        audio.currentTime,
+      )
+        ? Math.max(
+            0,
+            audio.currentTime,
+          )
+        : 0,
+    );
+
+    setDuration(
+      Number.isFinite(
+        audio.duration,
+      )
+        ? Math.max(
+            0,
+            audio.duration,
+          )
+        : 0,
+    );
+  }
 
 
   function savePosition(
@@ -3032,6 +3163,10 @@ function ResumeAudioPlayer({
   function handleLoadedMetadata(
     audio: HTMLAudioElement,
   ): void {
+    updatePlaybackState(
+      audio,
+    );
+
     if (
       restoredForJobRef.current === jobId
     ) {
@@ -3044,12 +3179,14 @@ function ResumeAudioPlayer({
       readPlaybackPosition(jobId);
 
     if (
-      savedPosition === null ||
-      !Number.isFinite(audio.duration) ||
-      audio.duration <= 0 ||
-      savedPosition >=
-        audio.duration -
-          PLAYBACK_FINISH_MARGIN_SECONDS
+      savedPosition === null
+      || !Number.isFinite(
+        audio.duration,
+      )
+      || audio.duration <= 0
+      || savedPosition >=
+        audio.duration
+          - PLAYBACK_FINISH_MARGIN_SECONDS
     ) {
       clearPlaybackPosition(jobId);
       setRestoredPosition(null);
@@ -3057,12 +3194,17 @@ function ResumeAudioPlayer({
       return;
     }
 
-    audio.currentTime = savedPosition;
+    audio.currentTime =
+      savedPosition;
+
+    setCurrentTime(
+      savedPosition,
+    );
 
     lastSavedBucketRef.current =
       Math.floor(
-        savedPosition /
-          PLAYBACK_SAVE_INTERVAL_SECONDS,
+        savedPosition
+          / PLAYBACK_SAVE_INTERVAL_SECONDS,
       );
 
     setRestoredPosition(
@@ -3076,13 +3218,18 @@ function ResumeAudioPlayer({
   function handleTimeUpdate(
     audio: HTMLAudioElement,
   ): void {
+    updatePlaybackState(
+      audio,
+    );
+
     const bucket = Math.floor(
-      audio.currentTime /
-        PLAYBACK_SAVE_INTERVAL_SECONDS,
+      audio.currentTime
+        / PLAYBACK_SAVE_INTERVAL_SECONDS,
     );
 
     if (
-      bucket === lastSavedBucketRef.current
+      bucket
+      === lastSavedBucketRef.current
     ) {
       return;
     }
@@ -3090,29 +3237,72 @@ function ResumeAudioPlayer({
     lastSavedBucketRef.current =
       bucket;
 
-    savePosition(audio);
+    savePosition(
+      audio,
+    );
   }
 
 
   function handleImmediateSave(
     audio: HTMLAudioElement,
   ): void {
+    updatePlaybackState(
+      audio,
+    );
+
     lastSavedBucketRef.current =
       Math.floor(
-        audio.currentTime /
-          PLAYBACK_SAVE_INTERVAL_SECONDS,
+        audio.currentTime
+          / PLAYBACK_SAVE_INTERVAL_SECONDS,
       );
 
-    savePosition(audio);
+    savePosition(
+      audio,
+    );
+  }
+
+
+  function handlePlay(
+    audio: HTMLAudioElement,
+  ): void {
+    updatePlaybackState(
+      audio,
+    );
+
+    setIsPlaying(true);
+    setIsNowPlaying(true);
+
+    window.dispatchEvent(
+      new CustomEvent<NowPlayingEventDetail>(
+        NOW_PLAYING_EVENT,
+        {
+          detail: {
+            playerKey,
+          },
+        },
+      ),
+    );
+  }
+
+
+  function handlePause(
+    audio: HTMLAudioElement,
+  ): void {
+    setIsPlaying(false);
+
+    handleImmediateSave(
+      audio,
+    );
   }
 
 
   function handleResumeFromSaved(): void {
-    const audio = playerRef.current;
+    const audio =
+      playerRef.current;
 
     if (
-      audio === null ||
-      restoredPosition === null
+      audio === null
+      || restoredPosition === null
     ) {
       return;
     }
@@ -3120,23 +3310,30 @@ function ResumeAudioPlayer({
     audio.currentTime =
       restoredPosition;
 
+    setCurrentTime(
+      restoredPosition,
+    );
+
     lastSavedBucketRef.current =
       Math.floor(
-        restoredPosition /
-          PLAYBACK_SAVE_INTERVAL_SECONDS,
+        restoredPosition
+          / PLAYBACK_SAVE_INTERVAL_SECONDS,
       );
   }
 
 
   function handleStartOver(): void {
-    const audio = playerRef.current;
+    const audio =
+      playerRef.current;
 
     clearPlaybackPosition(jobId);
 
-    lastSavedBucketRef.current = -1;
+    lastSavedBucketRef.current =
+      -1;
 
     setRestoredPosition(null);
     setPositionSaved(false);
+    setCurrentTime(0);
 
     if (audio !== null) {
       audio.currentTime = 0;
@@ -3147,15 +3344,65 @@ function ResumeAudioPlayer({
   function handleEnded(): void {
     clearPlaybackPosition(jobId);
 
-    lastSavedBucketRef.current = -1;
+    lastSavedBucketRef.current =
+      -1;
 
     setRestoredPosition(null);
     setPositionSaved(false);
+    setCurrentTime(0);
+    setIsPlaying(false);
+    setIsNowPlaying(false);
   }
 
 
+  function togglePlayback(): void {
+    const audio =
+      playerRef.current;
+
+    if (audio === null) {
+      return;
+    }
+
+    if (audio.paused) {
+      void audio.play().catch(
+        () => undefined,
+      );
+    } else {
+      audio.pause();
+    }
+  }
+
+
+  function showFullPlayer(): void {
+    playerContainerRef.current?.scrollIntoView(
+      {
+        behavior: "smooth",
+        block: "center",
+      },
+    );
+  }
+
+
+  const progressPercent =
+    duration > 0
+      ? Math.min(
+          100,
+          Math.max(
+            0,
+            (
+              currentTime
+              / duration
+            ) * 100,
+          ),
+        )
+      : 0;
+
+
   return (
-    <>
+    <div
+      id={`audiobook-player-${playerKey}`}
+      ref={playerContainerRef}
+    >
       <audio
         className={className}
         controls
@@ -3166,7 +3413,12 @@ function ResumeAudioPlayer({
           )
         }
         onPause={(event) =>
-          handleImmediateSave(
+          handlePause(
+            event.currentTarget,
+          )
+        }
+        onPlay={(event) =>
+          handlePlay(
             event.currentTarget,
           )
         }
@@ -3224,14 +3476,90 @@ function ResumeAudioPlayer({
           on this device.
         </p>
       ) : null}
-    </>
+
+      {isNowPlaying && (
+        <div className="fixed inset-x-4 bottom-4 z-50 mx-auto max-w-4xl overflow-hidden rounded-2xl border border-cyan-500/40 bg-slate-950/95 shadow-2xl shadow-black/50 backdrop-blur">
+          <div
+            aria-hidden="true"
+            className="h-1 bg-slate-800"
+          >
+            <div
+              className="h-full bg-cyan-400 transition-[width] duration-300"
+              style={{
+                width: `${progressPercent}%`,
+              }}
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 px-4 py-3 sm:flex-nowrap">
+            <button
+              aria-label={
+                isPlaying
+                  ? "Pause audiobook"
+                  : "Play audiobook"
+              }
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-cyan-400 font-bold text-slate-950 transition hover:bg-cyan-300"
+              onClick={
+                togglePlayback
+              }
+              type="button"
+            >
+              {isPlaying ? "Ⅱ" : "▶"}
+            </button>
+
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="shrink-0 rounded-full bg-cyan-500/15 px-2 py-0.5 text-[10px] font-bold text-cyan-300">
+                  {format}
+                </span>
+
+                <p className="truncate text-sm font-semibold text-slate-100">
+                  {bookTitle}
+                </p>
+              </div>
+
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
+                {bookAuthor && (
+                  <span className="truncate">
+                    {bookAuthor}
+                  </span>
+                )}
+
+                <span>
+                  {formatPlaybackPosition(
+                    currentTime,
+                  )}
+                  {" / "}
+                  {formatPlaybackPosition(
+                    duration,
+                  )}
+                </span>
+              </div>
+            </div>
+
+            <button
+              className="shrink-0 rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-cyan-400 hover:text-cyan-200"
+              onClick={
+                showFullPlayer
+              }
+              type="button"
+            >
+              Go to player
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
-
 function M4bPlayer({
+  bookAuthor,
+  bookTitle,
   jobId,
 }: {
+  bookAuthor: string | null;
+  bookTitle: string;
   jobId: number;
 }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -3421,7 +3749,10 @@ function M4bPlayer({
     <>
       <ResumeAudioPlayer
         audioRef={audioRef}
+        bookAuthor={bookAuthor}
+        bookTitle={bookTitle}
         className="mt-4 w-full"
+        format="M4B"
         jobId={jobId}
         src={`${API_URL}/audiobook-jobs/${jobId}/audio/m4b`}
       />
