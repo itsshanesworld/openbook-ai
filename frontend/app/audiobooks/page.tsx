@@ -3239,6 +3239,7 @@ function M4bPlayer({
     [],
   );
   const [chapterError, setChapterError] = useState("");
+  const [currentTimeMs, setCurrentTimeMs] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -3272,6 +3273,62 @@ function M4bPlayer({
     };
   }, [jobId]);
 
+  useEffect(() => {
+    const audio = audioRef.current;
+
+    if (!audio) {
+      return;
+    }
+
+    setCurrentTimeMs(
+      Math.max(
+        0,
+        audio.currentTime * 1000,
+      ),
+    );
+
+    function updatePlaybackPosition(): void {
+      if (!audio) {
+        return;
+      }
+
+      setCurrentTimeMs(
+        Math.max(
+          0,
+          audio.currentTime * 1000,
+        ),
+      );
+    }
+
+    audio.addEventListener(
+      "loadedmetadata",
+      updatePlaybackPosition,
+    );
+    audio.addEventListener(
+      "seeked",
+      updatePlaybackPosition,
+    );
+    audio.addEventListener(
+      "timeupdate",
+      updatePlaybackPosition,
+    );
+
+    return () => {
+      audio.removeEventListener(
+        "loadedmetadata",
+        updatePlaybackPosition,
+      );
+      audio.removeEventListener(
+        "seeked",
+        updatePlaybackPosition,
+      );
+      audio.removeEventListener(
+        "timeupdate",
+        updatePlaybackPosition,
+      );
+    };
+  }, [jobId]);
+
   function jumpToChapter(
     chapter: AudiobookChapter,
   ): void {
@@ -3283,8 +3340,82 @@ function M4bPlayer({
 
     audio.currentTime = chapter.start_ms / 1000;
 
+    setCurrentTimeMs(
+      chapter.start_ms,
+    );
+
     void audio.play().catch(() => undefined);
   }
+
+  const activeChapterIndex = useMemo(() => {
+    if (chapters.length === 0) {
+      return -1;
+    }
+
+    const matchingIndex = chapters.findIndex(
+      (chapter) =>
+        currentTimeMs >= chapter.start_ms &&
+        currentTimeMs < chapter.end_ms,
+    );
+
+    if (matchingIndex >= 0) {
+      return matchingIndex;
+    }
+
+    const lastIndex =
+      chapters.length - 1;
+
+    if (
+      currentTimeMs >=
+      chapters[lastIndex].start_ms
+    ) {
+      return lastIndex;
+    }
+
+    return -1;
+  }, [chapters, currentTimeMs]);
+
+  const activeChapter =
+    activeChapterIndex >= 0
+      ? chapters[activeChapterIndex]
+      : null;
+
+  const activeChapterDurationMs =
+    activeChapter === null
+      ? 0
+      : Math.max(
+          1,
+          activeChapter.end_ms -
+            activeChapter.start_ms,
+        );
+
+  const activeChapterElapsedMs =
+    activeChapter === null
+      ? 0
+      : Math.min(
+          activeChapterDurationMs,
+          Math.max(
+            0,
+            currentTimeMs -
+              activeChapter.start_ms,
+          ),
+        );
+
+  const activeChapterProgress =
+    activeChapter === null
+      ? 0
+      : Math.min(
+          100,
+          Math.max(
+            0,
+            Math.round(
+              (
+                activeChapterElapsedMs /
+                activeChapterDurationMs
+              ) * 100,
+            ),
+          ),
+        );
 
   return (
     <>
@@ -3303,34 +3434,149 @@ function M4bPlayer({
 
       {chapters.length > 0 && (
         <div className="mt-5">
-          <h5 className="text-sm font-semibold text-slate-200">
-            Chapters
-          </h5>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h5 className="text-sm font-semibold text-slate-200">
+              Chapters
+            </h5>
+
+            <span className="text-xs text-slate-500">
+              {chapters.length}{" "}
+              {chapters.length === 1
+                ? "chapter"
+                : "chapters"}
+            </span>
+          </div>
+
+          {activeChapter && (
+            <div className="mt-3 rounded-lg border border-cyan-500/40 bg-cyan-500/10 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="min-w-0 text-sm font-semibold text-cyan-100">
+                  Now playing:{" "}
+                  <span className="break-words">
+                    {activeChapter.title}
+                  </span>
+                </p>
+
+                <span className="shrink-0 text-xs font-semibold text-cyan-200">
+                  {activeChapterProgress}%
+                </span>
+              </div>
+
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-800">
+                <div
+                  className="h-full bg-cyan-400 transition-[width] duration-300"
+                  style={{
+                    width: `${activeChapterProgress}%`,
+                  }}
+                />
+              </div>
+
+              <p className="mt-2 text-xs text-slate-400">
+                {formatTimestamp(
+                  activeChapterElapsedMs,
+                )}{" "}
+                of{" "}
+                {formatTimestamp(
+                  activeChapterDurationMs,
+                )}
+              </p>
+            </div>
+          )}
 
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            {chapters.map((chapter, index) => (
-              <button
-                aria-label={`Play ${chapter.title}`}
-                className="flex items-center justify-between gap-4 rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 text-left transition hover:border-cyan-400 hover:bg-slate-900"
-                key={`${chapter.title}-${chapter.start_ms}`}
-                onClick={() => jumpToChapter(chapter)}
-                type="button"
-              >
-                <span className="min-w-0">
-                  <span className="mr-2 text-xs text-slate-500">
-                    {index + 1}.
+            {chapters.map((chapter, index) => {
+              const isActive =
+                index === activeChapterIndex;
+
+              const chapterProgress =
+                isActive
+                  ? activeChapterProgress
+                  : currentTimeMs >=
+                      chapter.end_ms
+                    ? 100
+                    : 0;
+
+              return (
+                <button
+                  aria-current={
+                    isActive
+                      ? "true"
+                      : undefined
+                  }
+                  aria-label={`Play ${chapter.title}`}
+                  className={`relative overflow-hidden rounded-lg border px-4 py-3 text-left transition ${
+                    isActive
+                      ? "border-cyan-400 bg-cyan-500/10 ring-1 ring-cyan-400/30"
+                      : "border-slate-700 bg-slate-950 hover:border-cyan-400 hover:bg-slate-900"
+                  }`}
+                  key={`${chapter.title}-${chapter.start_ms}`}
+                  onClick={() =>
+                    jumpToChapter(
+                      chapter,
+                    )
+                  }
+                  type="button"
+                >
+                  <span className="flex items-center justify-between gap-4">
+                    <span className="min-w-0">
+                      <span
+                        className={`mr-2 text-xs ${
+                          isActive
+                            ? "text-cyan-300"
+                            : "text-slate-500"
+                        }`}
+                      >
+                        {index + 1}.
+                      </span>
+
+                      <span
+                        className={`font-semibold ${
+                          isActive
+                            ? "text-cyan-100"
+                            : "text-cyan-200"
+                        }`}
+                      >
+                        {chapter.title}
+                      </span>
+                    </span>
+
+                    <span className="shrink-0 text-sm text-slate-400">
+                      {formatTimestamp(
+                        chapter.start_ms,
+                      )}
+                    </span>
                   </span>
 
-                  <span className="font-semibold text-cyan-200">
-                    {chapter.title}
-                  </span>
-                </span>
+                  {isActive && (
+                    <span className="mt-2 flex items-center justify-between gap-3 text-xs">
+                      <span className="font-semibold text-cyan-300">
+                        Now playing
+                      </span>
 
-                <span className="shrink-0 text-sm text-slate-400">
-                  {formatTimestamp(chapter.start_ms)}
-                </span>
-              </button>
-            ))}
+                      <span className="text-cyan-200">
+                        {chapterProgress}%
+                      </span>
+                    </span>
+                  )}
+
+                  <span
+                    aria-hidden="true"
+                    className="absolute inset-x-0 bottom-0 h-1 bg-slate-800"
+                  >
+                    <span
+                      className={`block h-full transition-[width] duration-300 ${
+                        isActive
+                          ? "bg-cyan-400"
+                          : "bg-slate-600"
+                      }`}
+                      style={{
+                        width: `${chapterProgress}%`,
+                      }}
+                    />
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
