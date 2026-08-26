@@ -206,6 +206,7 @@ type JobAvailabilityFilter =
 
 type JobSortOrder =
   | "newest"
+  | "recent"
   | "oldest"
   | "title"
   | "size";
@@ -213,6 +214,10 @@ type JobSortOrder =
 type JobPinnedFilter =
   | "all"
   | "pinned";
+
+type JobListeningFilter =
+  | "all"
+  | "continue";
 
 interface ErrorResponse {
   detail?: string | Array<{ msg?: string }>;
@@ -469,10 +474,24 @@ export default function AudiobooksPage() {
     useState<JobSortOrder>("newest");
   const [jobPinnedFilter, setJobPinnedFilter] =
     useState<JobPinnedFilter>("all");
+  const [jobListeningFilter, setJobListeningFilter] =
+    useState<JobListeningFilter>("all");
   const [pinnedJobIds, setPinnedJobIds] =
     useState<Set<number>>(
       () => new Set(),
     );
+  const [
+    resumePositionByJobId,
+    setResumePositionByJobId,
+  ] = useState<Map<number, number>>(
+    () => new Map(),
+  );
+  const [
+    lastPlayedAtByJobId,
+    setLastPlayedAtByJobId,
+  ] = useState<Map<number, number>>(
+    () => new Map(),
+  );
   const [visibleJobCount, setVisibleJobCount] =
     useState(JOB_HISTORY_PAGE_SIZE);
 
@@ -485,6 +504,75 @@ export default function AudiobooksPage() {
       readPinnedAudiobookJobIds(),
     );
   }, []);
+
+
+  const refreshPlaybackLibraryState =
+    useCallback((): void => {
+      const nextResumePositions =
+        new Map<number, number>();
+
+      const nextLastPlayedAt =
+        new Map<number, number>();
+
+      for (const job of jobs) {
+        const resumePosition =
+          readPlaybackPosition(
+            job.id,
+          );
+
+        if (
+          resumePosition !== null
+        ) {
+          nextResumePositions.set(
+            job.id,
+            resumePosition,
+          );
+        }
+
+        const lastPlayedAt =
+          readLastPlayedAt(
+            job.id,
+          );
+
+        if (
+          lastPlayedAt !== null
+        ) {
+          nextLastPlayedAt.set(
+            job.id,
+            lastPlayedAt,
+          );
+        }
+      }
+
+      setResumePositionByJobId(
+        nextResumePositions,
+      );
+
+      setLastPlayedAtByJobId(
+        nextLastPlayedAt,
+      );
+    }, [jobs]);
+
+
+  useEffect(() => {
+    refreshPlaybackLibraryState();
+
+    function handlePlaybackLibraryChange(): void {
+      refreshPlaybackLibraryState();
+    }
+
+    window.addEventListener(
+      PLAYBACK_LIBRARY_EVENT,
+      handlePlaybackLibraryChange,
+    );
+
+    return () => {
+      window.removeEventListener(
+        PLAYBACK_LIBRARY_EVENT,
+        handlePlaybackLibraryChange,
+      );
+    };
+  }, [refreshPlaybackLibraryState]);
 
 
   function togglePinnedJob(
@@ -646,12 +734,26 @@ export default function AudiobooksPage() {
           jobPinnedFilter === "all" ||
           pinnedJobIds.has(job.id);
 
+        const continueListeningMatches =
+          jobListeningFilter === "all" ||
+          (
+            resumePositionByJobId.has(
+              job.id,
+            ) &&
+            (
+              job.wav_available ||
+              job.mp3?.available ||
+              job.m4b?.available
+            )
+          );
+
         if (
           !statusMatches ||
           !generationFormatMatches ||
           !bookMatches ||
           !availabilityMatches ||
-          !pinnedMatches
+          !pinnedMatches ||
+          !continueListeningMatches
         ) {
           return false;
         }
@@ -703,6 +805,25 @@ export default function AudiobooksPage() {
         }
 
         switch (jobSortOrder) {
+          case "recent": {
+            const recentComparison =
+              (
+                lastPlayedAtByJobId.get(
+                  right.id,
+                ) ?? 0
+              ) -
+              (
+                lastPlayedAtByJobId.get(
+                  left.id,
+                ) ?? 0
+              );
+
+            return (
+              recentComparison ||
+              right.id - left.id
+            );
+          }
+
           case "oldest":
             return left.id - right.id;
 
@@ -742,12 +863,15 @@ export default function AudiobooksPage() {
     jobAvailabilityFilter,
     jobBookFilter,
     jobFormatFilter,
+    jobListeningFilter,
     jobPinnedFilter,
     jobSearch,
     jobSortOrder,
     jobs,
     jobStatusFilter,
+    lastPlayedAtByJobId,
     pinnedJobIds,
+    resumePositionByJobId,
     voices,
   ]);
 
@@ -757,7 +881,8 @@ export default function AudiobooksPage() {
     jobFormatFilter !== "all" ||
     jobBookFilter !== "all" ||
     jobAvailabilityFilter !== "all" ||
-    jobPinnedFilter !== "all";
+    jobPinnedFilter !== "all" ||
+    jobListeningFilter !== "all";
 
   const jobControlsModified =
     jobFiltersActive ||
@@ -771,6 +896,7 @@ export default function AudiobooksPage() {
     setJobBookFilter("all");
     setJobAvailabilityFilter("all");
     setJobPinnedFilter("all");
+    setJobListeningFilter("all");
     setJobSortOrder("newest");
   }
 
@@ -800,6 +926,7 @@ export default function AudiobooksPage() {
     jobAvailabilityFilter,
     jobBookFilter,
     jobFormatFilter,
+    jobListeningFilter,
     jobPinnedFilter,
     jobSearch,
     jobSortOrder,
@@ -2558,7 +2685,7 @@ export default function AudiobooksPage() {
                   </p>
                 </div>
 
-                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-8">
+                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-9">
                   <div className="xl:col-span-2">
                     <label
                       className="text-xs font-semibold uppercase tracking-wide text-slate-500"
@@ -2768,6 +2895,36 @@ export default function AudiobooksPage() {
                   <div>
                     <label
                       className="text-xs font-semibold uppercase tracking-wide text-slate-500"
+                      htmlFor="job-history-listening"
+                    >
+                      Listening
+                    </label>
+
+                    <select
+                      className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400"
+                      id="job-history-listening"
+                      onChange={(event) =>
+                        setJobListeningFilter(
+                          event.target
+                            .value as JobListeningFilter,
+                        )
+                      }
+                      value={
+                        jobListeningFilter
+                      }
+                    >
+                      <option value="all">
+                        All
+                      </option>
+                      <option value="continue">
+                        Continue listening
+                      </option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label
+                      className="text-xs font-semibold uppercase tracking-wide text-slate-500"
                       htmlFor="job-history-sort"
                     >
                       Sort
@@ -2786,6 +2943,9 @@ export default function AudiobooksPage() {
                     >
                       <option value="newest">
                         Newest first
+                      </option>
+                      <option value="recent">
+                        Recently played
                       </option>
                       <option value="oldest">
                         Oldest first
@@ -3361,6 +3521,10 @@ export default function AudiobooksPage() {
 
 const PLAYBACK_STORAGE_PREFIX =
   "openbook-audiobook-playback-v1";
+const PLAYBACK_ACTIVITY_STORAGE_PREFIX =
+  "openbook-audiobook-last-played-v1";
+const PLAYBACK_LIBRARY_EVENT =
+  "openbook-playback-library-changed";
 const PLAYBACK_RESUME_MIN_SECONDS = 10;
 const PLAYBACK_FINISH_MARGIN_SECONDS = 15;
 const PLAYBACK_SAVE_INTERVAL_SECONDS = 5;
@@ -3370,6 +3534,75 @@ function getPlaybackStorageKey(
   jobId: number,
 ): string {
   return `${PLAYBACK_STORAGE_PREFIX}:${jobId}`;
+}
+
+
+function getPlaybackActivityStorageKey(
+  jobId: number,
+): string {
+  return `${PLAYBACK_ACTIVITY_STORAGE_PREFIX}:${jobId}`;
+}
+
+
+function notifyPlaybackLibraryChanged(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.dispatchEvent(
+    new Event(
+      PLAYBACK_LIBRARY_EVENT,
+    ),
+  );
+}
+
+
+function readLastPlayedAt(
+  jobId: number,
+): number | null {
+  try {
+    const value =
+      window.localStorage.getItem(
+        getPlaybackActivityStorageKey(
+          jobId,
+        ),
+      );
+
+    if (value === null) {
+      return null;
+    }
+
+    const parsed = Number(value);
+
+    if (
+      !Number.isFinite(parsed) ||
+      parsed <= 0
+    ) {
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+
+function recordLastPlayed(
+  jobId: number,
+): void {
+  try {
+    window.localStorage.setItem(
+      getPlaybackActivityStorageKey(
+        jobId,
+      ),
+      Date.now().toString(),
+    );
+
+    notifyPlaybackLibraryChanged();
+  } catch {
+    // Playback history remains optional without browser storage.
+  }
 }
 
 
@@ -3408,6 +3641,8 @@ function clearPlaybackPosition(
     window.localStorage.removeItem(
       getPlaybackStorageKey(jobId),
     );
+
+    notifyPlaybackLibraryChanged();
   } catch {
     // Resume playback remains optional without browser storage.
   }
@@ -3436,6 +3671,8 @@ function storePlaybackPosition(
       getPlaybackStorageKey(jobId),
       currentTime.toFixed(3),
     );
+
+    notifyPlaybackLibraryChanged();
 
     return true;
   } catch {
@@ -3752,6 +3989,10 @@ function ResumeAudioPlayer({
       audio,
     );
 
+    recordLastPlayed(
+      jobId,
+    );
+
     lastSavedBucketRef.current =
       Math.floor(
         audio.currentTime
@@ -3769,6 +4010,10 @@ function ResumeAudioPlayer({
   ): void {
     updatePlaybackState(
       audio,
+    );
+
+    recordLastPlayed(
+      jobId,
     );
 
     setIsPlaying(true);
@@ -3844,6 +4089,10 @@ function ResumeAudioPlayer({
 
 
   function handleEnded(): void {
+    recordLastPlayed(
+      jobId,
+    );
+
     clearPlaybackPosition(jobId);
 
     lastSavedBucketRef.current =
