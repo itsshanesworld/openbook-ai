@@ -416,6 +416,71 @@ function getStoredAudioBytes(
   );
 }
 
+
+
+function formatRecentlyPlayed(
+  lastPlayedAt: number,
+  now: number,
+): string {
+  const elapsedMilliseconds =
+    Math.max(
+      0,
+      now - lastPlayedAt,
+    );
+
+  const elapsedMinutes =
+    Math.floor(
+      elapsedMilliseconds / 60_000,
+    );
+
+  if (elapsedMinutes < 1) {
+    return "Played just now";
+  }
+
+  if (elapsedMinutes < 60) {
+    return `Played ${elapsedMinutes} min ago`;
+  }
+
+  const elapsedHours =
+    Math.floor(
+      elapsedMinutes / 60,
+    );
+
+  if (elapsedHours < 24) {
+    return `Played ${elapsedHours} ${
+      elapsedHours === 1
+        ? "hr"
+        : "hr"
+    } ago`;
+  }
+
+  const elapsedDays =
+    Math.floor(
+      elapsedHours / 24,
+    );
+
+  if (elapsedDays === 1) {
+    return "Played yesterday";
+  }
+
+  if (elapsedDays < 7) {
+    return `Played ${elapsedDays} days ago`;
+  }
+
+  return `Played ${
+    new Date(
+      lastPlayedAt,
+    ).toLocaleDateString(
+      undefined,
+      {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      },
+    )
+  }`;
+}
+
 export default function AudiobooksPage() {
   const [books, setBooks] = useState<BookSummary[]>([]);
   const [bookId, setBookId] = useState<number | null>(null);
@@ -492,6 +557,10 @@ export default function AudiobooksPage() {
   ] = useState<Map<number, number>>(
     () => new Map(),
   );
+  const [
+    recentlyPlayedNow,
+    setRecentlyPlayedNow,
+  ] = useState(0);
   const [visibleJobCount, setVisibleJobCount] =
     useState(JOB_HISTORY_PAGE_SIZE);
 
@@ -506,8 +575,35 @@ export default function AudiobooksPage() {
   }, []);
 
 
+  useEffect(() => {
+    function updateRecentlyPlayedClock(): void {
+      setRecentlyPlayedNow(
+        Date.now(),
+      );
+    }
+
+    updateRecentlyPlayedClock();
+
+    const interval =
+      window.setInterval(
+        updateRecentlyPlayedClock,
+        60_000,
+      );
+
+    return () => {
+      window.clearInterval(
+        interval,
+      );
+    };
+  }, []);
+
+
   const refreshPlaybackLibraryState =
     useCallback((): void => {
+      setRecentlyPlayedNow(
+        Date.now(),
+      );
+
       const nextResumePositions =
         new Map<number, number>();
 
@@ -3074,6 +3170,29 @@ export default function AudiobooksPage() {
                             installedVoice.id === job.voice,
                         )?.name ?? job.voice}
                       </p>
+
+
+                      {lastPlayedAtByJobId.has(
+                        job.id,
+                      ) && (
+                        <p
+                          className="mt-1 text-xs font-medium text-cyan-300/80"
+                          title={
+                            new Date(
+                              lastPlayedAtByJobId.get(
+                                job.id,
+                              ) ?? 0,
+                            ).toLocaleString()
+                          }
+                        >
+                          {formatRecentlyPlayed(
+                            lastPlayedAtByJobId.get(
+                              job.id,
+                            ) ?? 0,
+                            recentlyPlayedNow,
+                          )}
+                        </p>
+                      )}
                       </div>
                     </div>
 
