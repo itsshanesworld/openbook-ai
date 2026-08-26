@@ -3875,6 +3875,45 @@ function ResumeAudioPlayer({
   }
 
 
+  function seekBy(
+    seconds: number,
+  ): void {
+    const audio =
+      playerRef.current;
+
+    if (audio === null) {
+      return;
+    }
+
+    const maximumTime =
+      Number.isFinite(
+        audio.duration,
+      ) &&
+      audio.duration > 0
+        ? audio.duration
+        : Number.POSITIVE_INFINITY;
+
+    const nextTime = Math.min(
+      maximumTime,
+      Math.max(
+        0,
+        audio.currentTime + seconds,
+      ),
+    );
+
+    audio.currentTime =
+      nextTime;
+
+    setCurrentTime(
+      nextTime,
+    );
+
+    handleImmediateSave(
+      audio,
+    );
+  }
+
+
   function showFullPlayer(): void {
     playerContainerRef.current?.scrollIntoView(
       {
@@ -3994,20 +4033,44 @@ function ResumeAudioPlayer({
           </div>
 
           <div className="flex flex-wrap items-center gap-3 px-4 py-3 sm:flex-nowrap">
-            <button
-              aria-label={
-                isPlaying
-                  ? "Pause audiobook"
-                  : "Play audiobook"
-              }
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-cyan-400 font-bold text-slate-950 transition hover:bg-cyan-300"
-              onClick={
-                togglePlayback
-              }
-              type="button"
-            >
-              {isPlaying ? "Ⅱ" : "▶"}
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                aria-label="Rewind audiobook 15 seconds"
+                className="flex h-9 min-w-12 items-center justify-center rounded-lg border border-slate-700 px-2 text-xs font-semibold text-slate-200 transition hover:border-cyan-400 hover:text-cyan-200"
+                onClick={() =>
+                  seekBy(-15)
+                }
+                type="button"
+              >
+                ↶ 15s
+              </button>
+
+              <button
+                aria-label={
+                  isPlaying
+                    ? "Pause audiobook"
+                    : "Play audiobook"
+                }
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-cyan-400 font-bold text-slate-950 transition hover:bg-cyan-300"
+                onClick={
+                  togglePlayback
+                }
+                type="button"
+              >
+                {isPlaying ? "Ⅱ" : "▶"}
+              </button>
+
+              <button
+                aria-label="Forward audiobook 30 seconds"
+                className="flex h-9 min-w-12 items-center justify-center rounded-lg border border-slate-700 px-2 text-xs font-semibold text-slate-200 transition hover:border-cyan-400 hover:text-cyan-200"
+                onClick={() =>
+                  seekBy(30)
+                }
+                type="button"
+              >
+                30s ↷
+              </button>
+            </div>
 
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 items-center gap-2">
