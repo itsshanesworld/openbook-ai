@@ -3523,11 +3523,111 @@ const PLAYBACK_STORAGE_PREFIX =
   "openbook-audiobook-playback-v1";
 const PLAYBACK_ACTIVITY_STORAGE_PREFIX =
   "openbook-audiobook-last-played-v1";
+const PLAYBACK_RATE_STORAGE_KEY =
+  "openbook-audiobook-playback-rate-v1";
 const PLAYBACK_LIBRARY_EVENT =
   "openbook-playback-library-changed";
+const PLAYBACK_RATE_EVENT =
+  "openbook-audiobook-playback-rate-changed";
+const PLAYBACK_RATE_OPTIONS = [
+  0.75,
+  1,
+  1.25,
+  1.5,
+  1.75,
+  2,
+] as const;
 const PLAYBACK_RESUME_MIN_SECONDS = 10;
 const PLAYBACK_FINISH_MARGIN_SECONDS = 15;
 const PLAYBACK_SAVE_INTERVAL_SECONDS = 5;
+
+
+function normalizePlaybackRate(
+  value: number,
+): number {
+  return (
+    PLAYBACK_RATE_OPTIONS.find(
+      (option) =>
+        option === value,
+    ) ?? 1
+  );
+}
+
+
+function readStoredPlaybackRate(): number {
+  if (typeof window === "undefined") {
+    return 1;
+  }
+
+  try {
+    const value =
+      window.localStorage.getItem(
+        PLAYBACK_RATE_STORAGE_KEY,
+      );
+
+    if (value === null) {
+      return 1;
+    }
+
+    return normalizePlaybackRate(
+      Number(value),
+    );
+  } catch {
+    return 1;
+  }
+}
+
+
+function applyPlaybackRate(
+  audio: HTMLAudioElement,
+  playbackRate: number,
+): void {
+  const normalizedRate =
+    normalizePlaybackRate(
+      playbackRate,
+    );
+
+  audio.defaultPlaybackRate =
+    normalizedRate;
+
+  audio.playbackRate =
+    normalizedRate;
+}
+
+
+function saveStoredPlaybackRate(
+  playbackRate: number,
+): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const normalizedRate =
+    normalizePlaybackRate(
+      playbackRate,
+    );
+
+  try {
+    window.localStorage.setItem(
+      PLAYBACK_RATE_STORAGE_KEY,
+      normalizedRate.toString(),
+    );
+  } catch {
+    // Playback speed still works for this session.
+  }
+
+  window.dispatchEvent(
+    new CustomEvent<PlaybackRateEventDetail>(
+      PLAYBACK_RATE_EVENT,
+      {
+        detail: {
+          playbackRate:
+            normalizedRate,
+        },
+      },
+    ),
+  );
+}
 
 
 function getPlaybackStorageKey(
@@ -3726,6 +3826,11 @@ interface NowPlayingEventDetail {
 }
 
 
+interface PlaybackRateEventDetail {
+  playbackRate: number;
+}
+
+
 const NOW_PLAYING_EVENT =
   "openbook-now-playing";
 
@@ -3792,6 +3897,11 @@ function ResumeAudioPlayer({
     setDuration,
   ] = useState(0);
 
+  const [
+    playbackRate,
+    setPlaybackRate,
+  ] = useState(1);
+
   const playerKey =
     `${jobId}:${format.toLowerCase()}`;
 
@@ -3806,7 +3916,69 @@ function ResumeAudioPlayer({
     setIsPlaying(false);
     setCurrentTime(0);
     setDuration(0);
-  }, [jobId, src]);
+
+    const storedPlaybackRate =
+      readStoredPlaybackRate();
+
+    setPlaybackRate(
+      storedPlaybackRate,
+    );
+
+    const audio =
+      playerRef.current;
+
+    if (audio !== null) {
+      applyPlaybackRate(
+        audio,
+        storedPlaybackRate,
+      );
+    }
+  }, [
+    jobId,
+    playerRef,
+    src,
+  ]);
+
+
+  useEffect(() => {
+    function handlePlaybackRateChanged(
+      event: Event,
+    ): void {
+      const customEvent =
+        event as CustomEvent<PlaybackRateEventDetail>;
+
+      const nextPlaybackRate =
+        normalizePlaybackRate(
+          customEvent.detail.playbackRate,
+        );
+
+      setPlaybackRate(
+        nextPlaybackRate,
+      );
+
+      const audio =
+        playerRef.current;
+
+      if (audio !== null) {
+        applyPlaybackRate(
+          audio,
+          nextPlaybackRate,
+        );
+      }
+    }
+
+    window.addEventListener(
+      PLAYBACK_RATE_EVENT,
+      handlePlaybackRateChanged,
+    );
+
+    return () => {
+      window.removeEventListener(
+        PLAYBACK_RATE_EVENT,
+        handlePlaybackRateChanged,
+      );
+    };
+  }, [playerRef]);
 
 
   useEffect(() => {
@@ -3902,6 +4074,18 @@ function ResumeAudioPlayer({
   function handleLoadedMetadata(
     audio: HTMLAudioElement,
   ): void {
+    const storedPlaybackRate =
+      readStoredPlaybackRate();
+
+    applyPlaybackRate(
+      audio,
+      storedPlaybackRate,
+    );
+
+    setPlaybackRate(
+      storedPlaybackRate,
+    );
+
     updatePlaybackState(
       audio,
     );
@@ -4114,6 +4298,11 @@ function ResumeAudioPlayer({
       return;
     }
 
+    applyPlaybackRate(
+      audio,
+      playbackRate,
+    );
+
     if (audio.paused) {
       void audio.play().catch(
         () => undefined,
@@ -4121,6 +4310,34 @@ function ResumeAudioPlayer({
     } else {
       audio.pause();
     }
+  }
+
+
+  function handlePlaybackRateChange(
+    nextPlaybackRate: number,
+  ): void {
+    const normalizedRate =
+      normalizePlaybackRate(
+        nextPlaybackRate,
+      );
+
+    setPlaybackRate(
+      normalizedRate,
+    );
+
+    const audio =
+      playerRef.current;
+
+    if (audio !== null) {
+      applyPlaybackRate(
+        audio,
+        normalizedRate,
+      );
+    }
+
+    saveStoredPlaybackRate(
+      normalizedRate,
+    );
   }
 
 
@@ -4319,6 +4536,38 @@ function ResumeAudioPlayer({
               >
                 30s ↷
               </button>
+
+              <label
+                className="sr-only"
+                htmlFor={`playback-rate-${playerKey}`}
+              >
+                Playback speed
+              </label>
+
+              <select
+                aria-label="Playback speed"
+                className="h-9 rounded-lg border border-slate-700 bg-slate-950 px-2 text-xs font-semibold text-slate-200 outline-none transition focus:border-cyan-400"
+                id={`playback-rate-${playerKey}`}
+                onChange={(event) =>
+                  handlePlaybackRateChange(
+                    Number(
+                      event.target.value,
+                    ),
+                  )
+                }
+                value={playbackRate}
+              >
+                {PLAYBACK_RATE_OPTIONS.map(
+                  (rate) => (
+                    <option
+                      key={rate}
+                      value={rate}
+                    >
+                      {rate}×
+                    </option>
+                  ),
+                )}
+              </select>
             </div>
 
             <div className="min-w-0 flex-1">
