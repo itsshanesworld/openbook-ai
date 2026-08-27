@@ -5054,7 +5054,7 @@ function ResumeAudioPlayer({
       ) : null}
 
       {isNowPlaying && (
-        <div className="fixed inset-x-4 bottom-4 z-50 mx-auto max-w-4xl overflow-hidden rounded-2xl border border-cyan-500/40 bg-slate-950/95 shadow-2xl shadow-black/50 backdrop-blur">
+        <div className="fixed inset-x-2 bottom-2 z-50 mx-auto max-w-4xl overflow-hidden rounded-2xl border border-cyan-500/40 bg-slate-950/95 shadow-2xl shadow-black/50 backdrop-blur sm:inset-x-4 sm:bottom-4">
           <div
             aria-hidden="true"
             className="h-1 bg-slate-800"
@@ -5067,8 +5067,8 @@ function ResumeAudioPlayer({
             />
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 px-4 py-3 sm:flex-nowrap">
-            <div className="flex shrink-0 items-center gap-2">
+          <div className="grid gap-2 px-3 py-2 sm:px-4 sm:py-3 lg:flex lg:items-center lg:gap-3">
+            <div className="flex w-full items-center justify-center gap-2 lg:w-auto lg:shrink-0 lg:justify-start">
               {onPreviousChapter && (
                 <button
                   aria-label="Previous M4B chapter"
@@ -5139,7 +5139,9 @@ function ResumeAudioPlayer({
                   ⏭
                 </button>
               )}
+            </div>
 
+            <div className="flex w-full min-w-0 items-center gap-2 lg:w-auto lg:shrink-0">
               <label
                 className="sr-only"
                 htmlFor={`playback-rate-${playerKey}`}
@@ -5149,7 +5151,7 @@ function ResumeAudioPlayer({
 
               <select
                 aria-label="Playback speed"
-                className="h-9 rounded-lg border border-slate-700 bg-slate-950 px-2 text-xs font-semibold text-slate-200 outline-none transition focus:border-cyan-400"
+                className="h-9 shrink-0 rounded-lg border border-slate-700 bg-slate-950 px-2 text-xs font-semibold text-slate-200 outline-none transition focus:border-cyan-400"
                 id={`playback-rate-${playerKey}`}
                 onChange={(event) =>
                   handlePlaybackRateChange(
@@ -5210,7 +5212,7 @@ function ResumeAudioPlayer({
 
               <input
                 aria-label="Audiobook volume"
-                className="w-20 accent-cyan-400"
+                className="min-w-0 flex-1 accent-cyan-400 sm:max-w-40 lg:w-20 lg:flex-none"
                 id={`audiobook-volume-${playerKey}`}
                 max="100"
                 min="0"
@@ -5232,7 +5234,7 @@ function ResumeAudioPlayer({
               />
             </div>
 
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0 w-full lg:flex-1">
               <div className="flex min-w-0 items-center gap-2">
                 <span className="shrink-0 rounded-full bg-cyan-500/15 px-2 py-0.5 text-[10px] font-bold text-cyan-300">
                   {format}
@@ -5281,7 +5283,7 @@ function ResumeAudioPlayer({
               </div>
             </div>
 
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex w-full shrink-0 items-center justify-between gap-2 lg:w-auto lg:justify-start">
               <button
                 aria-controls={`audiobook-shortcuts-${playerKey}`}
                 aria-expanded={
@@ -5302,7 +5304,7 @@ function ResumeAudioPlayer({
               </button>
 
               <button
-                className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-cyan-400 hover:text-cyan-200"
+                className="flex-1 rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-cyan-400 hover:text-cyan-200 lg:flex-none"
                 onClick={
                   showFullPlayer
                 }
