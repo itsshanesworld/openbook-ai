@@ -3958,6 +3958,7 @@ function ResumeAudioPlayer({
   audioRef,
   bookAuthor,
   bookTitle,
+  chapterTitle,
   className,
   format,
   jobId,
@@ -3966,6 +3967,7 @@ function ResumeAudioPlayer({
   audioRef?: RefObject<HTMLAudioElement | null>;
   bookAuthor: string | null;
   bookTitle: string;
+  chapterTitle?: string;
   className: string;
   format: NowPlayingFormat;
   jobId: number;
@@ -4707,6 +4709,15 @@ function ResumeAudioPlayer({
                   </span>
                 )}
 
+                {chapterTitle && (
+                  <span
+                    className="max-w-full truncate font-medium text-cyan-300"
+                    title={chapterTitle}
+                  >
+                    Chapter: {chapterTitle}
+                  </span>
+                )}
+
                 <span>
                   {formatPlaybackPosition(
                     currentTime,
@@ -4997,6 +5008,9 @@ function M4bPlayer({
         audioRef={audioRef}
         bookAuthor={bookAuthor}
         bookTitle={bookTitle}
+        chapterTitle={
+          activeChapter?.title
+        }
         className="mt-4 w-full"
         format="M4B"
         jobId={jobId}
