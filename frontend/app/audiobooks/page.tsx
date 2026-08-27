@@ -3958,6 +3958,8 @@ function ResumeAudioPlayer({
   audioRef,
   bookAuthor,
   bookTitle,
+  canGoToNextChapter,
+  canGoToPreviousChapter,
   chapterCount,
   chapterNumber,
   chapterProgress,
@@ -3965,11 +3967,15 @@ function ResumeAudioPlayer({
   className,
   format,
   jobId,
+  onNextChapter,
+  onPreviousChapter,
   src,
 }: {
   audioRef?: RefObject<HTMLAudioElement | null>;
   bookAuthor: string | null;
   bookTitle: string;
+  canGoToNextChapter?: boolean;
+  canGoToPreviousChapter?: boolean;
   chapterCount?: number;
   chapterNumber?: number;
   chapterProgress?: number;
@@ -3977,6 +3983,8 @@ function ResumeAudioPlayer({
   className: string;
   format: NowPlayingFormat;
   jobId: number;
+  onNextChapter?: () => void;
+  onPreviousChapter?: () => void;
   src: string;
 }) {
   const internalAudioRef =
@@ -4627,6 +4635,23 @@ function ResumeAudioPlayer({
 
           <div className="flex flex-wrap items-center gap-3 px-4 py-3 sm:flex-nowrap">
             <div className="flex shrink-0 items-center gap-2">
+              {onPreviousChapter && (
+                <button
+                  aria-label="Previous M4B chapter"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-700 text-sm font-semibold text-slate-200 transition hover:border-cyan-400 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-slate-700 disabled:hover:text-slate-200"
+                  disabled={
+                    !canGoToPreviousChapter
+                  }
+                  onClick={
+                    onPreviousChapter
+                  }
+                  title="Previous chapter"
+                  type="button"
+                >
+                  ⏮
+                </button>
+              )}
+
               <button
                 aria-label="Rewind audiobook 15 seconds"
                 className="flex h-9 min-w-12 items-center justify-center rounded-lg border border-slate-700 px-2 text-xs font-semibold text-slate-200 transition hover:border-cyan-400 hover:text-cyan-200"
@@ -4663,6 +4688,23 @@ function ResumeAudioPlayer({
               >
                 30s ↷
               </button>
+
+              {onNextChapter && (
+                <button
+                  aria-label="Next M4B chapter"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-700 text-sm font-semibold text-slate-200 transition hover:border-cyan-400 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-slate-700 disabled:hover:text-slate-200"
+                  disabled={
+                    !canGoToNextChapter
+                  }
+                  onClick={
+                    onNextChapter
+                  }
+                  title="Next chapter"
+                  type="button"
+                >
+                  ⏭
+                </button>
+              )}
 
               <label
                 className="sr-only"
@@ -5024,6 +5066,12 @@ function M4bPlayer({
         audioRef={audioRef}
         bookAuthor={bookAuthor}
         bookTitle={bookTitle}
+        canGoToNextChapter={
+          canGoToNextChapter
+        }
+        canGoToPreviousChapter={
+          canGoToPreviousChapter
+        }
         chapterCount={
           activeChapter === null
             ? undefined
@@ -5045,6 +5093,12 @@ function M4bPlayer({
         className="mt-4 w-full"
         format="M4B"
         jobId={jobId}
+        onNextChapter={
+          goToNextChapter
+        }
+        onPreviousChapter={
+          goToPreviousChapter
+        }
         src={`${API_URL}/audiobook-jobs/${jobId}/audio/m4b`}
       />
 
