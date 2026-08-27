@@ -3954,6 +3954,19 @@ const NOW_PLAYING_EVENT =
   "openbook-now-playing";
 
 
+function isAudiobookKeyboardShortcutTarget(
+  target: EventTarget | null,
+): boolean {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  return target.closest(
+    'input, textarea, select, button, a, audio, [contenteditable]:not([contenteditable="false"]), [role="textbox"]',
+  ) !== null;
+}
+
+
 function ResumeAudioPlayer({
   audioRef,
   bookAuthor,
@@ -4513,6 +4526,92 @@ function ResumeAudioPlayer({
       audio,
     );
   }
+
+
+  useEffect(() => {
+    if (!isNowPlaying) {
+      return;
+    }
+
+    function handleKeyboardShortcut(
+      event: KeyboardEvent,
+    ): void {
+      if (
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey ||
+        isAudiobookKeyboardShortcutTarget(
+          event.target,
+        )
+      ) {
+        return;
+      }
+
+      if (
+        event.key === " " &&
+        !event.shiftKey
+      ) {
+        if (event.repeat) {
+          return;
+        }
+
+        event.preventDefault();
+        togglePlayback();
+        return;
+      }
+
+      if (event.key === "ArrowLeft") {
+        if (event.shiftKey) {
+          if (
+            event.repeat ||
+            onPreviousChapter === undefined ||
+            !canGoToPreviousChapter
+          ) {
+            return;
+          }
+
+          event.preventDefault();
+          onPreviousChapter();
+          return;
+        }
+
+        event.preventDefault();
+        seekBy(-15);
+        return;
+      }
+
+      if (event.key === "ArrowRight") {
+        if (event.shiftKey) {
+          if (
+            event.repeat ||
+            onNextChapter === undefined ||
+            !canGoToNextChapter
+          ) {
+            return;
+          }
+
+          event.preventDefault();
+          onNextChapter();
+          return;
+        }
+
+        event.preventDefault();
+        seekBy(30);
+      }
+    }
+
+    window.addEventListener(
+      "keydown",
+      handleKeyboardShortcut,
+    );
+
+    return () => {
+      window.removeEventListener(
+        "keydown",
+        handleKeyboardShortcut,
+      );
+    };
+  });
 
 
   function showFullPlayer(): void {
