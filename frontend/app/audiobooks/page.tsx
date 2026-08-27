@@ -3958,6 +3958,9 @@ function ResumeAudioPlayer({
   audioRef,
   bookAuthor,
   bookTitle,
+  chapterCount,
+  chapterNumber,
+  chapterProgress,
   chapterTitle,
   className,
   format,
@@ -3967,6 +3970,9 @@ function ResumeAudioPlayer({
   audioRef?: RefObject<HTMLAudioElement | null>;
   bookAuthor: string | null;
   bookTitle: string;
+  chapterCount?: number;
+  chapterNumber?: number;
+  chapterProgress?: number;
   chapterTitle?: string;
   className: string;
   format: NowPlayingFormat;
@@ -4718,6 +4724,16 @@ function ResumeAudioPlayer({
                   </span>
                 )}
 
+                {chapterNumber !== undefined &&
+                  chapterCount !== undefined &&
+                  chapterProgress !== undefined && (
+                    <span className="shrink-0 font-semibold text-cyan-200">
+                      Chapter {chapterNumber} of{" "}
+                      {chapterCount} ·{" "}
+                      {chapterProgress}%
+                    </span>
+                  )}
+
                 <span>
                   {formatPlaybackPosition(
                     currentTime,
@@ -5008,6 +5024,21 @@ function M4bPlayer({
         audioRef={audioRef}
         bookAuthor={bookAuthor}
         bookTitle={bookTitle}
+        chapterCount={
+          activeChapter === null
+            ? undefined
+            : chapters.length
+        }
+        chapterNumber={
+          activeChapterIndex >= 0
+            ? activeChapterIndex + 1
+            : undefined
+        }
+        chapterProgress={
+          activeChapter === null
+            ? undefined
+            : activeChapterProgress
+        }
         chapterTitle={
           activeChapter?.title
         }
