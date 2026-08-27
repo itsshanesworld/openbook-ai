@@ -3950,6 +3950,17 @@ interface PlaybackRateEventDetail {
 }
 
 
+interface SleepTimerPreference {
+  durationMinutes: number;
+  expiresAt: number;
+}
+
+
+interface SleepTimerEventDetail {
+  preference: SleepTimerPreference | null;
+}
+
+
 const NOW_PLAYING_EVENT =
   "openbook-now-playing";
 
@@ -3958,6 +3969,19 @@ const VOLUME_STORAGE_KEY =
 
 const MUTED_STORAGE_KEY =
   "openbook-audiobook-muted-v1";
+
+const SLEEP_TIMER_STORAGE_KEY =
+  "openbook-audiobook-sleep-timer-v1";
+
+const SLEEP_TIMER_EVENT =
+  "openbook-audiobook-sleep-timer-changed";
+
+const SLEEP_TIMER_OPTIONS = [
+  15,
+  30,
+  45,
+  60,
+] as const;
 
 
 function normalizeAudiobookVolume(
@@ -4070,6 +4094,126 @@ function applyAudiobookVolumePreference(
 }
 
 
+function readStoredSleepTimerPreference():
+  SleepTimerPreference | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const storedValue =
+      window.localStorage.getItem(
+        SLEEP_TIMER_STORAGE_KEY,
+      );
+
+    if (storedValue === null) {
+      return null;
+    }
+
+    const parsed = JSON.parse(
+      storedValue,
+    ) as Partial<SleepTimerPreference>;
+
+    const durationMinutes =
+      Number(parsed.durationMinutes);
+
+    const expiresAt =
+      Number(parsed.expiresAt);
+
+    const validDuration =
+      SLEEP_TIMER_OPTIONS.some(
+        (option) =>
+          option === durationMinutes,
+      );
+
+    if (
+      !validDuration ||
+      !Number.isFinite(expiresAt) ||
+      expiresAt <= Date.now()
+    ) {
+      window.localStorage.removeItem(
+        SLEEP_TIMER_STORAGE_KEY,
+      );
+
+      return null;
+    }
+
+    return {
+      durationMinutes,
+      expiresAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+
+function storeSleepTimerPreference(
+  preference: SleepTimerPreference | null,
+): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    if (preference === null) {
+      window.localStorage.removeItem(
+        SLEEP_TIMER_STORAGE_KEY,
+      );
+    } else {
+      window.localStorage.setItem(
+        SLEEP_TIMER_STORAGE_KEY,
+        JSON.stringify(
+          preference,
+        ),
+      );
+    }
+  } catch {
+    // The timer still works for this session.
+  }
+
+  window.dispatchEvent(
+    new CustomEvent<SleepTimerEventDetail>(
+      SLEEP_TIMER_EVENT,
+      {
+        detail: {
+          preference,
+        },
+      },
+    ),
+  );
+}
+
+
+function formatSleepTimerRemaining(
+  expiresAt: number,
+  now: number,
+): string {
+  const remainingSeconds =
+    Math.max(
+      0,
+      Math.ceil(
+        (
+          expiresAt -
+          now
+        ) / 1000,
+      ),
+    );
+
+  const minutes =
+    Math.floor(
+      remainingSeconds / 60,
+    );
+
+  const seconds =
+    remainingSeconds % 60;
+
+  return `${minutes}:${seconds
+    .toString()
+    .padStart(2, "0")}`;
+}
+
+
 function isAudiobookKeyboardShortcutTarget(
   target: EventTarget | null,
 ): boolean {
@@ -4175,6 +4319,18 @@ function ResumeAudioPlayer({
     muted,
     setMuted,
   ] = useState(false);
+
+  const [
+    sleepTimerPreference,
+    setSleepTimerPreference,
+  ] = useState<SleepTimerPreference | null>(
+    null,
+  );
+
+  const [
+    sleepTimerNow,
+    setSleepTimerNow,
+  ] = useState(0);
 
   const previousNonZeroVolumeRef =
     useRef(1);
@@ -4580,6 +4736,14 @@ function ResumeAudioPlayer({
 
 
   function handleEnded(): void {
+    setSleepTimerPreference(
+      null,
+    );
+
+    storeSleepTimerPreference(
+      null,
+    );
+
     recordLastPlayed(
       jobId,
     );
@@ -4685,6 +4849,121 @@ function ResumeAudioPlayer({
       audio,
     );
   }
+
+
+  useEffect(() => {
+    function handleSleepTimerEvent(
+      event: Event,
+    ): void {
+      const customEvent =
+        event as CustomEvent<SleepTimerEventDetail>;
+
+      setSleepTimerPreference(
+        customEvent.detail.preference,
+      );
+
+      setSleepTimerNow(
+        Date.now(),
+      );
+    }
+
+    window.addEventListener(
+      SLEEP_TIMER_EVENT,
+      handleSleepTimerEvent,
+    );
+
+    return () => {
+      window.removeEventListener(
+        SLEEP_TIMER_EVENT,
+        handleSleepTimerEvent,
+      );
+    };
+  }, []);
+
+
+  useEffect(() => {
+    if (!isNowPlaying) {
+      return;
+    }
+
+    const storedPreference =
+      readStoredSleepTimerPreference();
+
+    setSleepTimerPreference(
+      storedPreference,
+    );
+
+    setSleepTimerNow(
+      Date.now(),
+    );
+  }, [
+    isNowPlaying,
+  ]);
+
+
+  useEffect(() => {
+    if (
+      !isNowPlaying ||
+      sleepTimerPreference === null
+    ) {
+      return;
+    }
+
+    const activeSleepTimerPreference =
+      sleepTimerPreference;
+
+    function updateSleepTimer(): void {
+      const now =
+        Date.now();
+
+      setSleepTimerNow(
+        now,
+      );
+
+      if (
+        now <
+        activeSleepTimerPreference.expiresAt
+      ) {
+        return;
+      }
+
+      const audio =
+        playerRef.current;
+
+      if (
+        audio !== null &&
+        !audio.paused
+      ) {
+        audio.pause();
+      }
+
+      setSleepTimerPreference(
+        null,
+      );
+
+      storeSleepTimerPreference(
+        null,
+      );
+    }
+
+    updateSleepTimer();
+
+    const interval =
+      window.setInterval(
+        updateSleepTimer,
+        1_000,
+      );
+
+    return () => {
+      window.clearInterval(
+        interval,
+      );
+    };
+  }, [
+    isNowPlaying,
+    playerRef,
+    sleepTimerPreference,
+  ]);
 
 
   useEffect(() => {
@@ -4940,6 +5219,57 @@ function ResumeAudioPlayer({
     storeAudiobookVolumePreference(
       nextVolume,
       nextMuted,
+    );
+  }
+
+
+  function handleSleepTimerChange(
+    durationMinutes: number,
+  ): void {
+    if (durationMinutes <= 0) {
+      setSleepTimerPreference(
+        null,
+      );
+
+      setSleepTimerNow(
+        Date.now(),
+      );
+
+      storeSleepTimerPreference(
+        null,
+      );
+
+      return;
+    }
+
+    const validDuration =
+      SLEEP_TIMER_OPTIONS.find(
+        (option) =>
+          option === durationMinutes,
+      );
+
+    if (validDuration === undefined) {
+      return;
+    }
+
+    const preference: SleepTimerPreference = {
+      durationMinutes:
+        validDuration,
+      expiresAt:
+        Date.now() +
+        validDuration * 60_000,
+    };
+
+    setSleepTimerPreference(
+      preference,
+    );
+
+    setSleepTimerNow(
+      Date.now(),
+    );
+
+    storeSleepTimerPreference(
+      preference,
     );
   }
 
@@ -5232,6 +5562,52 @@ function ResumeAudioPlayer({
                   volume * 100,
                 )}
               />
+
+              <label
+                className="sr-only"
+                htmlFor={`sleep-timer-${playerKey}`}
+              >
+                Sleep timer
+              </label>
+
+              <select
+                aria-label="Sleep timer"
+                className="h-9 shrink-0 rounded-lg border border-slate-700 bg-slate-950 px-2 text-xs font-semibold text-slate-200 outline-none transition focus:border-cyan-400"
+                id={`sleep-timer-${playerKey}`}
+                onChange={(event) =>
+                  handleSleepTimerChange(
+                    Number(
+                      event.target.value,
+                    ),
+                  )
+                }
+                title={
+                  sleepTimerPreference === null
+                    ? "Sleep timer off"
+                    : `Sleep timer: ${
+                        sleepTimerPreference.durationMinutes
+                      } minutes`
+                }
+                value={
+                  sleepTimerPreference
+                    ?.durationMinutes ?? 0
+                }
+              >
+                <option value="0">
+                  Sleep off
+                </option>
+
+                {SLEEP_TIMER_OPTIONS.map(
+                  (minutes) => (
+                    <option
+                      key={minutes}
+                      value={minutes}
+                    >
+                      {minutes} min
+                    </option>
+                  ),
+                )}
+              </select>
             </div>
 
             <div className="min-w-0 w-full lg:flex-1">
@@ -5280,6 +5656,17 @@ function ResumeAudioPlayer({
                     duration,
                   )}
                 </span>
+
+                {sleepTimerPreference !== null &&
+                  sleepTimerNow > 0 && (
+                    <span className="shrink-0 font-semibold text-amber-300">
+                      Sleep{" "}
+                      {formatSleepTimerRemaining(
+                        sleepTimerPreference.expiresAt,
+                        sleepTimerNow,
+                      )}
+                    </span>
+                  )}
               </div>
             </div>
 
