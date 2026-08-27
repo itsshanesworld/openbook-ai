@@ -3953,6 +3953,122 @@ interface PlaybackRateEventDetail {
 const NOW_PLAYING_EVENT =
   "openbook-now-playing";
 
+const VOLUME_STORAGE_KEY =
+  "openbook-audiobook-volume-v1";
+
+const MUTED_STORAGE_KEY =
+  "openbook-audiobook-muted-v1";
+
+
+function normalizeAudiobookVolume(
+  value: number,
+): number {
+  if (!Number.isFinite(value)) {
+    return 1;
+  }
+
+  return Math.min(
+    1,
+    Math.max(
+      0,
+      value,
+    ),
+  );
+}
+
+
+function readStoredAudiobookVolume(): number {
+  if (typeof window === "undefined") {
+    return 1;
+  }
+
+  try {
+    const storedValue =
+      window.localStorage.getItem(
+        VOLUME_STORAGE_KEY,
+      );
+
+    if (storedValue === null) {
+      return 1;
+    }
+
+    return normalizeAudiobookVolume(
+      Number(storedValue),
+    );
+  } catch {
+    return 1;
+  }
+}
+
+
+function readStoredAudiobookMuted(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  try {
+    return (
+      window.localStorage.getItem(
+        MUTED_STORAGE_KEY,
+      ) === "true"
+    );
+  } catch {
+    return false;
+  }
+}
+
+
+function storeAudiobookVolumePreference(
+  volume: number,
+  muted: boolean,
+): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(
+      VOLUME_STORAGE_KEY,
+      normalizeAudiobookVolume(
+        volume,
+      ).toString(),
+    );
+
+    window.localStorage.setItem(
+      MUTED_STORAGE_KEY,
+      muted.toString(),
+    );
+  } catch {
+    // Playback controls still work for this session.
+  }
+}
+
+
+function applyAudiobookVolumePreference(
+  audio: HTMLAudioElement,
+  volume: number,
+  muted: boolean,
+): void {
+  const normalizedVolume =
+    normalizeAudiobookVolume(
+      volume,
+    );
+
+  if (
+    Math.abs(
+      audio.volume -
+        normalizedVolume,
+    ) > 0.001
+  ) {
+    audio.volume =
+      normalizedVolume;
+  }
+
+  if (audio.muted !== muted) {
+    audio.muted = muted;
+  }
+}
+
 
 function isAudiobookKeyboardShortcutTarget(
   target: EventTarget | null,
@@ -4051,6 +4167,19 @@ function ResumeAudioPlayer({
   ] = useState(1);
 
   const [
+    volume,
+    setVolume,
+  ] = useState(1);
+
+  const [
+    muted,
+    setMuted,
+  ] = useState(false);
+
+  const previousNonZeroVolumeRef =
+    useRef(1);
+
+  const [
     shortcutsHelpOpen,
     setShortcutsHelpOpen,
   ] = useState(false);
@@ -4077,6 +4206,25 @@ function ResumeAudioPlayer({
       storedPlaybackRate,
     );
 
+    const storedVolume =
+      readStoredAudiobookVolume();
+
+    const storedMuted =
+      readStoredAudiobookMuted();
+
+    setVolume(
+      storedVolume,
+    );
+
+    setMuted(
+      storedMuted,
+    );
+
+    if (storedVolume > 0) {
+      previousNonZeroVolumeRef.current =
+        storedVolume;
+    }
+
     const audio =
       playerRef.current;
 
@@ -4084,6 +4232,12 @@ function ResumeAudioPlayer({
       applyPlaybackRate(
         audio,
         storedPlaybackRate,
+      );
+
+      applyAudiobookVolumePreference(
+        audio,
+        storedVolume,
+        storedMuted,
       );
     }
   }, [
@@ -4538,6 +4692,46 @@ function ResumeAudioPlayer({
       return;
     }
 
+    const storedVolume =
+      readStoredAudiobookVolume();
+
+    const storedMuted =
+      readStoredAudiobookMuted();
+
+    setVolume(
+      storedVolume,
+    );
+
+    setMuted(
+      storedMuted,
+    );
+
+    if (storedVolume > 0) {
+      previousNonZeroVolumeRef.current =
+        storedVolume;
+    }
+
+    const audio =
+      playerRef.current;
+
+    if (audio !== null) {
+      applyAudiobookVolumePreference(
+        audio,
+        storedVolume,
+        storedMuted,
+      );
+    }
+  }, [
+    isNowPlaying,
+    playerRef,
+  ]);
+
+
+  useEffect(() => {
+    if (!isNowPlaying) {
+      return;
+    }
+
     function handleKeyboardShortcut(
       event: KeyboardEvent,
     ): void {
@@ -4628,6 +4822,128 @@ function ResumeAudioPlayer({
   });
 
 
+  function handleVolumeSliderChange(
+    nextVolume: number,
+  ): void {
+    const normalizedVolume =
+      normalizeAudiobookVolume(
+        nextVolume,
+      );
+
+    const nextMuted =
+      normalizedVolume === 0;
+
+    if (normalizedVolume > 0) {
+      previousNonZeroVolumeRef.current =
+        normalizedVolume;
+    }
+
+    setVolume(
+      normalizedVolume,
+    );
+
+    setMuted(
+      nextMuted,
+    );
+
+    const audio =
+      playerRef.current;
+
+    if (audio !== null) {
+      applyAudiobookVolumePreference(
+        audio,
+        normalizedVolume,
+        nextMuted,
+      );
+    }
+
+    storeAudiobookVolumePreference(
+      normalizedVolume,
+      nextMuted,
+    );
+  }
+
+
+  function toggleMuted(): void {
+    const shouldUnmute =
+      muted ||
+      volume === 0;
+
+    const nextMuted =
+      !shouldUnmute;
+
+    const nextVolume =
+      shouldUnmute &&
+      volume === 0
+        ? Math.max(
+            0.01,
+            previousNonZeroVolumeRef.current,
+          )
+        : volume;
+
+    if (nextVolume > 0) {
+      previousNonZeroVolumeRef.current =
+        nextVolume;
+    }
+
+    setVolume(
+      nextVolume,
+    );
+
+    setMuted(
+      nextMuted,
+    );
+
+    const audio =
+      playerRef.current;
+
+    if (audio !== null) {
+      applyAudiobookVolumePreference(
+        audio,
+        nextVolume,
+        nextMuted,
+      );
+    }
+
+    storeAudiobookVolumePreference(
+      nextVolume,
+      nextMuted,
+    );
+  }
+
+
+  function handleNativeVolumeChange(
+    audio: HTMLAudioElement,
+  ): void {
+    const nextVolume =
+      normalizeAudiobookVolume(
+        audio.volume,
+      );
+
+    const nextMuted =
+      audio.muted ||
+      nextVolume === 0;
+
+    if (nextVolume > 0) {
+      previousNonZeroVolumeRef.current =
+        nextVolume;
+    }
+
+    setVolume(
+      nextVolume,
+    );
+
+    setMuted(
+      nextMuted,
+    );
+
+    storeAudiobookVolumePreference(
+      nextVolume,
+      nextMuted,
+    );
+  }
+
+
   function showFullPlayer(): void {
     playerContainerRef.current?.scrollIntoView(
       {
@@ -4662,6 +4978,11 @@ function ResumeAudioPlayer({
         className={className}
         controls
         onEnded={handleEnded}
+        onVolumeChange={(event) =>
+          handleNativeVolumeChange(
+            event.currentTarget,
+          )
+        }
         onLoadedMetadata={(event) =>
           handleLoadedMetadata(
             event.currentTarget,
@@ -4850,6 +5171,65 @@ function ResumeAudioPlayer({
                   ),
                 )}
               </select>
+
+              <button
+                aria-label={
+                  muted ||
+                  volume === 0
+                    ? "Unmute audiobook"
+                    : "Mute audiobook"
+                }
+                aria-pressed={
+                  muted ||
+                  volume === 0
+                }
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-700 text-sm transition hover:border-cyan-400 hover:text-cyan-200"
+                onClick={
+                  toggleMuted
+                }
+                title={
+                  muted ||
+                  volume === 0
+                    ? "Unmute"
+                    : "Mute"
+                }
+                type="button"
+              >
+                {muted ||
+                volume === 0
+                  ? "🔇"
+                  : "🔊"}
+              </button>
+
+              <label
+                className="sr-only"
+                htmlFor={`audiobook-volume-${playerKey}`}
+              >
+                Audiobook volume
+              </label>
+
+              <input
+                aria-label="Audiobook volume"
+                className="w-20 accent-cyan-400"
+                id={`audiobook-volume-${playerKey}`}
+                max="100"
+                min="0"
+                onChange={(event) =>
+                  handleVolumeSliderChange(
+                    Number(
+                      event.target.value,
+                    ) / 100,
+                  )
+                }
+                step="1"
+                title={`Volume ${Math.round(
+                  volume * 100,
+                )}%`}
+                type="range"
+                value={Math.round(
+                  volume * 100,
+                )}
+              />
             </div>
 
             <div className="min-w-0 flex-1">
