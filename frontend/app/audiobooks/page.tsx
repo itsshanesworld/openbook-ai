@@ -3950,10 +3950,22 @@ interface PlaybackRateEventDetail {
 }
 
 
-interface SleepTimerPreference {
+interface TimedSleepTimerPreference {
+  mode: "timed";
   durationMinutes: number;
   expiresAt: number;
 }
+
+
+interface ChapterEndSleepTimerPreference {
+  mode: "chapter-end";
+  targetChapterEndMs: number;
+}
+
+
+type SleepTimerPreference =
+  | TimedSleepTimerPreference
+  | ChapterEndSleepTimerPreference;
 
 
 interface SleepTimerEventDetail {
@@ -4112,13 +4124,47 @@ function readStoredSleepTimerPreference():
 
     const parsed = JSON.parse(
       storedValue,
-    ) as Partial<SleepTimerPreference>;
+    ) as {
+      durationMinutes?: unknown;
+      expiresAt?: unknown;
+      mode?: unknown;
+      targetChapterEndMs?: unknown;
+    };
+
+    if (parsed.mode === "chapter-end") {
+      const targetChapterEndMs =
+        Number(
+          parsed.targetChapterEndMs,
+        );
+
+      if (
+        Number.isFinite(
+          targetChapterEndMs,
+        ) &&
+        targetChapterEndMs > 0
+      ) {
+        return {
+          mode: "chapter-end",
+          targetChapterEndMs,
+        };
+      }
+
+      window.localStorage.removeItem(
+        SLEEP_TIMER_STORAGE_KEY,
+      );
+
+      return null;
+    }
 
     const durationMinutes =
-      Number(parsed.durationMinutes);
+      Number(
+        parsed.durationMinutes,
+      );
 
     const expiresAt =
-      Number(parsed.expiresAt);
+      Number(
+        parsed.expiresAt,
+      );
 
     const validDuration =
       SLEEP_TIMER_OPTIONS.some(
@@ -4126,7 +4172,12 @@ function readStoredSleepTimerPreference():
           option === durationMinutes,
       );
 
+    const validMode =
+      parsed.mode === undefined ||
+      parsed.mode === "timed";
+
     if (
+      !validMode ||
       !validDuration ||
       !Number.isFinite(expiresAt) ||
       expiresAt <= Date.now()
@@ -4139,6 +4190,7 @@ function readStoredSleepTimerPreference():
     }
 
     return {
+      mode: "timed",
       durationMinutes,
       expiresAt,
     };
@@ -4234,6 +4286,7 @@ function ResumeAudioPlayer({
   canGoToNextChapter,
   canGoToPreviousChapter,
   chapterCount,
+  chapterEndMs,
   chapterNumber,
   chapterProgress,
   chapterTitle,
@@ -4250,6 +4303,7 @@ function ResumeAudioPlayer({
   canGoToNextChapter?: boolean;
   canGoToPreviousChapter?: boolean;
   chapterCount?: number;
+  chapterEndMs?: number;
   chapterNumber?: number;
   chapterProgress?: number;
   chapterTitle?: string;
@@ -4334,6 +4388,12 @@ function ResumeAudioPlayer({
 
   const previousNonZeroVolumeRef =
     useRef(1);
+
+  const sleepTimerNeedsChapterRebindRef =
+    useRef(false);
+
+  const sleepTimerNeedsInitialChapterBindRef =
+    useRef(false);
 
   const [
     shortcutsHelpOpen,
@@ -4883,11 +4943,55 @@ function ResumeAudioPlayer({
 
   useEffect(() => {
     if (!isNowPlaying) {
+      sleepTimerNeedsInitialChapterBindRef.current =
+        false;
+
       return;
     }
 
-    const storedPreference =
+    let storedPreference =
       readStoredSleepTimerPreference();
+
+    if (
+      storedPreference?.mode ===
+      "chapter-end"
+    ) {
+      if (format !== "M4B") {
+        storedPreference = null;
+
+        storeSleepTimerPreference(
+          null,
+        );
+      } else if (
+        chapterEndMs !== undefined
+      ) {
+        const reboundPreference:
+          ChapterEndSleepTimerPreference = {
+            mode: "chapter-end",
+            targetChapterEndMs:
+              chapterEndMs,
+          };
+
+        if (
+          storedPreference
+            .targetChapterEndMs !==
+          chapterEndMs
+        ) {
+          storedPreference =
+            reboundPreference;
+
+          storeSleepTimerPreference(
+            reboundPreference,
+          );
+        }
+
+        sleepTimerNeedsInitialChapterBindRef.current =
+          false;
+      } else {
+        sleepTimerNeedsInitialChapterBindRef.current =
+          true;
+      }
+    }
 
     setSleepTimerPreference(
       storedPreference,
@@ -4904,6 +5008,64 @@ function ResumeAudioPlayer({
   useEffect(() => {
     if (
       !isNowPlaying ||
+      sleepTimerPreference?.mode !==
+        "chapter-end"
+    ) {
+      return;
+    }
+
+    const needsBind =
+      sleepTimerNeedsInitialChapterBindRef.current ||
+      sleepTimerNeedsChapterRebindRef.current;
+
+    if (!needsBind) {
+      return;
+    }
+
+    if (
+      format !== "M4B" ||
+      chapterEndMs === undefined
+    ) {
+      return;
+    }
+
+    const reboundPreference:
+      ChapterEndSleepTimerPreference = {
+        mode: "chapter-end",
+        targetChapterEndMs:
+          chapterEndMs,
+      };
+
+    sleepTimerNeedsInitialChapterBindRef.current =
+      false;
+
+    sleepTimerNeedsChapterRebindRef.current =
+      false;
+
+    setSleepTimerPreference(
+      reboundPreference,
+    );
+
+    setSleepTimerNow(
+      Date.now(),
+    );
+
+    storeSleepTimerPreference(
+      reboundPreference,
+    );
+  }, [
+    chapterEndMs,
+    currentTime,
+    format,
+    isNowPlaying,
+    sleepTimerNow,
+    sleepTimerPreference,
+  ]);
+
+
+  useEffect(() => {
+    if (
+      !isNowPlaying ||
       sleepTimerPreference === null
     ) {
       return;
@@ -4912,21 +5074,7 @@ function ResumeAudioPlayer({
     const activeSleepTimerPreference =
       sleepTimerPreference;
 
-    function updateSleepTimer(): void {
-      const now =
-        Date.now();
-
-      setSleepTimerNow(
-        now,
-      );
-
-      if (
-        now <
-        activeSleepTimerPreference.expiresAt
-      ) {
-        return;
-      }
-
+    function finishSleepTimer(): void {
       const audio =
         playerRef.current;
 
@@ -4937,6 +5085,12 @@ function ResumeAudioPlayer({
         audio.pause();
       }
 
+      sleepTimerNeedsChapterRebindRef.current =
+        false;
+
+      sleepTimerNeedsInitialChapterBindRef.current =
+        false;
+
       setSleepTimerPreference(
         null,
       );
@@ -4946,12 +5100,69 @@ function ResumeAudioPlayer({
       );
     }
 
+    function updateSleepTimer(): void {
+      const now =
+        Date.now();
+
+      setSleepTimerNow(
+        now,
+      );
+
+      if (
+        activeSleepTimerPreference.mode ===
+        "timed"
+      ) {
+        if (
+          now <
+          activeSleepTimerPreference.expiresAt
+        ) {
+          return;
+        }
+
+        finishSleepTimer();
+        return;
+      }
+
+      if (
+        sleepTimerNeedsChapterRebindRef.current ||
+        sleepTimerNeedsInitialChapterBindRef.current
+      ) {
+        return;
+      }
+
+      const audio =
+        playerRef.current;
+
+      if (audio === null) {
+        return;
+      }
+
+      const currentTimeMs =
+        audio.currentTime * 1000;
+
+      if (
+        currentTimeMs + 50 <
+        activeSleepTimerPreference
+          .targetChapterEndMs
+      ) {
+        return;
+      }
+
+      finishSleepTimer();
+    }
+
     updateSleepTimer();
+
+    const intervalMilliseconds =
+      activeSleepTimerPreference.mode ===
+      "timed"
+        ? 1_000
+        : 250;
 
     const interval =
       window.setInterval(
         updateSleepTimer,
-        1_000,
+        intervalMilliseconds,
       );
 
     return () => {
@@ -5223,10 +5434,33 @@ function ResumeAudioPlayer({
   }
 
 
+  function handleSleepTimerSeeking(): void {
+    if (
+      sleepTimerPreference?.mode !==
+      "chapter-end"
+    ) {
+      return;
+    }
+
+    sleepTimerNeedsChapterRebindRef.current =
+      true;
+
+    setSleepTimerNow(
+      Date.now(),
+    );
+  }
+
+
   function handleSleepTimerChange(
-    durationMinutes: number,
+    value: string,
   ): void {
-    if (durationMinutes <= 0) {
+    sleepTimerNeedsChapterRebindRef.current =
+      false;
+
+    sleepTimerNeedsInitialChapterBindRef.current =
+      false;
+
+    if (value === "off") {
       setSleepTimerPreference(
         null,
       );
@@ -5242,6 +5476,39 @@ function ResumeAudioPlayer({
       return;
     }
 
+    if (value === "chapter-end") {
+      if (
+        format !== "M4B" ||
+        chapterEndMs === undefined
+      ) {
+        return;
+      }
+
+      const preference:
+        ChapterEndSleepTimerPreference = {
+          mode: "chapter-end",
+          targetChapterEndMs:
+            chapterEndMs,
+        };
+
+      setSleepTimerPreference(
+        preference,
+      );
+
+      setSleepTimerNow(
+        Date.now(),
+      );
+
+      storeSleepTimerPreference(
+        preference,
+      );
+
+      return;
+    }
+
+    const durationMinutes =
+      Number(value);
+
     const validDuration =
       SLEEP_TIMER_OPTIONS.find(
         (option) =>
@@ -5252,13 +5519,15 @@ function ResumeAudioPlayer({
       return;
     }
 
-    const preference: SleepTimerPreference = {
-      durationMinutes:
-        validDuration,
-      expiresAt:
-        Date.now() +
-        validDuration * 60_000,
-    };
+    const preference:
+      TimedSleepTimerPreference = {
+        mode: "timed",
+        durationMinutes:
+          validDuration,
+        expiresAt:
+          Date.now() +
+          validDuration * 60_000,
+      };
 
     setSleepTimerPreference(
       preference,
@@ -5308,6 +5577,9 @@ function ResumeAudioPlayer({
         className={className}
         controls
         onEnded={handleEnded}
+        onSeeking={
+          handleSleepTimerSeeking
+        }
         onVolumeChange={(event) =>
           handleNativeVolumeChange(
             event.currentTarget,
@@ -5576,26 +5848,44 @@ function ResumeAudioPlayer({
                 id={`sleep-timer-${playerKey}`}
                 onChange={(event) =>
                   handleSleepTimerChange(
-                    Number(
-                      event.target.value,
-                    ),
+                    event.target.value,
                   )
                 }
                 title={
                   sleepTimerPreference === null
                     ? "Sleep timer off"
-                    : `Sleep timer: ${
-                        sleepTimerPreference.durationMinutes
-                      } minutes`
+                    : sleepTimerPreference.mode ===
+                        "chapter-end"
+                      ? "Sleep timer: end of chapter"
+                      : `Sleep timer: ${
+                          sleepTimerPreference.durationMinutes
+                        } minutes`
                 }
                 value={
-                  sleepTimerPreference
-                    ?.durationMinutes ?? 0
+                  sleepTimerPreference === null
+                    ? "off"
+                    : sleepTimerPreference.mode ===
+                        "chapter-end"
+                      ? "chapter-end"
+                      : sleepTimerPreference
+                          .durationMinutes
+                          .toString()
                 }
               >
-                <option value="0">
+                <option value="off">
                   Sleep off
                 </option>
+
+                {format === "M4B" && (
+                  <option
+                    disabled={
+                      chapterEndMs === undefined
+                    }
+                    value="chapter-end"
+                  >
+                    End of chapter
+                  </option>
+                )}
 
                 {SLEEP_TIMER_OPTIONS.map(
                   (minutes) => (
@@ -5657,16 +5947,19 @@ function ResumeAudioPlayer({
                   )}
                 </span>
 
-                {sleepTimerPreference !== null &&
-                  sleepTimerNow > 0 && (
-                    <span className="shrink-0 font-semibold text-amber-300">
-                      Sleep{" "}
-                      {formatSleepTimerRemaining(
-                        sleepTimerPreference.expiresAt,
-                        sleepTimerNow,
-                      )}
-                    </span>
-                  )}
+                {sleepTimerPreference !== null && (
+                  <span className="shrink-0 font-semibold text-amber-300">
+                    {sleepTimerPreference.mode ===
+                    "chapter-end"
+                      ? "Sleep end of chapter"
+                      : sleepTimerNow > 0
+                        ? `Sleep ${formatSleepTimerRemaining(
+                            sleepTimerPreference.expiresAt,
+                            sleepTimerNow,
+                          )}`
+                        : "Sleep timer"}
+                  </span>
+                )}
               </div>
             </div>
 
@@ -6094,6 +6387,9 @@ function M4bPlayer({
           activeChapter === null
             ? undefined
             : chapters.length
+        }
+        chapterEndMs={
+          activeChapter?.end_ms
         }
         chapterNumber={
           activeChapterIndex >= 0
