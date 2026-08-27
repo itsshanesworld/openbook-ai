@@ -4050,6 +4050,11 @@ function ResumeAudioPlayer({
     setPlaybackRate,
   ] = useState(1);
 
+  const [
+    shortcutsHelpOpen,
+    setShortcutsHelpOpen,
+  ] = useState(false);
+
   const playerKey =
     `${jobId}:${format.toLowerCase()}`;
 
@@ -4536,6 +4541,15 @@ function ResumeAudioPlayer({
     function handleKeyboardShortcut(
       event: KeyboardEvent,
     ): void {
+      if (shortcutsHelpOpen) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          setShortcutsHelpOpen(false);
+        }
+
+        return;
+      }
+
       if (
         event.ctrlKey ||
         event.metaKey ||
@@ -4887,18 +4901,154 @@ function ResumeAudioPlayer({
               </div>
             </div>
 
-            <button
-              className="shrink-0 rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-cyan-400 hover:text-cyan-200"
-              onClick={
-                showFullPlayer
-              }
-              type="button"
-            >
-              Go to player
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                aria-controls={`audiobook-shortcuts-${playerKey}`}
+                aria-expanded={
+                  shortcutsHelpOpen
+                }
+                aria-haspopup="dialog"
+                aria-label="Show keyboard shortcuts"
+                className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-700 text-sm font-bold text-slate-200 transition hover:border-cyan-400 hover:text-cyan-200"
+                onClick={() =>
+                  setShortcutsHelpOpen(
+                    true,
+                  )
+                }
+                title="Keyboard shortcuts"
+                type="button"
+              >
+                ?
+              </button>
+
+              <button
+                className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-cyan-400 hover:text-cyan-200"
+                onClick={
+                  showFullPlayer
+                }
+                type="button"
+              >
+                Go to player
+              </button>
+            </div>
           </div>
         </div>
       )}
+
+      {isNowPlaying &&
+        shortcutsHelpOpen && (
+          <div
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm"
+            onClick={() =>
+              setShortcutsHelpOpen(
+                false,
+              )
+            }
+          >
+            <div
+              aria-labelledby={`audiobook-shortcuts-title-${playerKey}`}
+              aria-modal="true"
+              className="w-full max-w-md rounded-2xl border border-cyan-500/40 bg-slate-950 p-5 shadow-2xl shadow-black/60"
+              id={`audiobook-shortcuts-${playerKey}`}
+              onClick={(event) =>
+                event.stopPropagation()
+              }
+              role="dialog"
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3
+                    className="text-base font-bold text-slate-100"
+                    id={`audiobook-shortcuts-title-${playerKey}`}
+                  >
+                    Keyboard shortcuts
+                  </h3>
+
+                  <p className="mt-1 text-xs text-slate-400">
+                    Shortcuts control the active
+                    Now Playing audiobook.
+                  </p>
+                </div>
+
+                <button
+                  aria-label="Close keyboard shortcuts"
+                  autoFocus
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-700 text-lg text-slate-300 transition hover:border-cyan-400 hover:text-cyan-200"
+                  onClick={() =>
+                    setShortcutsHelpOpen(
+                      false,
+                    )
+                  }
+                  type="button"
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="mt-5 space-y-2">
+                <div className="flex items-center justify-between gap-4 rounded-lg bg-slate-900 px-3 py-2">
+                  <span className="text-sm text-slate-300">
+                    Play / Pause
+                  </span>
+
+                  <kbd className="rounded border border-slate-600 bg-slate-950 px-2 py-1 font-mono text-xs font-semibold text-cyan-200">
+                    Space
+                  </kbd>
+                </div>
+
+                <div className="flex items-center justify-between gap-4 rounded-lg bg-slate-900 px-3 py-2">
+                  <span className="text-sm text-slate-300">
+                    Rewind 15 seconds
+                  </span>
+
+                  <kbd className="rounded border border-slate-600 bg-slate-950 px-2 py-1 font-mono text-xs font-semibold text-cyan-200">
+                    ←
+                  </kbd>
+                </div>
+
+                <div className="flex items-center justify-between gap-4 rounded-lg bg-slate-900 px-3 py-2">
+                  <span className="text-sm text-slate-300">
+                    Forward 30 seconds
+                  </span>
+
+                  <kbd className="rounded border border-slate-600 bg-slate-950 px-2 py-1 font-mono text-xs font-semibold text-cyan-200">
+                    →
+                  </kbd>
+                </div>
+
+                {onPreviousChapter && (
+                  <div className="flex items-center justify-between gap-4 rounded-lg bg-slate-900 px-3 py-2">
+                    <span className="text-sm text-slate-300">
+                      Previous chapter
+                    </span>
+
+                    <kbd className="rounded border border-slate-600 bg-slate-950 px-2 py-1 font-mono text-xs font-semibold text-cyan-200">
+                      Shift + ←
+                    </kbd>
+                  </div>
+                )}
+
+                {onNextChapter && (
+                  <div className="flex items-center justify-between gap-4 rounded-lg bg-slate-900 px-3 py-2">
+                    <span className="text-sm text-slate-300">
+                      Next chapter
+                    </span>
+
+                    <kbd className="rounded border border-slate-600 bg-slate-950 px-2 py-1 font-mono text-xs font-semibold text-cyan-200">
+                      Shift + →
+                    </kbd>
+                  </div>
+                )}
+              </div>
+
+              <p className="mt-4 text-xs text-slate-500">
+                Shortcuts are disabled while
+                typing or while this help window
+                is open.
+              </p>
+            </div>
+          </div>
+        )}
     </div>
   );
 }
