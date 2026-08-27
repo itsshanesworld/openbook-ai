@@ -4735,6 +4735,10 @@ function ResumeAudioPlayer({
   );
 }
 
+const PREVIOUS_CHAPTER_RESTART_THRESHOLD_MS =
+  5_000;
+
+
 function M4bPlayer({
   bookAuthor,
   bookTitle,
@@ -4890,6 +4894,66 @@ function M4bPlayer({
       ? chapters[activeChapterIndex]
       : null;
 
+  const canGoToPreviousChapter =
+    activeChapterIndex > 0 ||
+    (
+      activeChapterIndex === 0 &&
+      activeChapter !== null &&
+      currentTimeMs -
+        activeChapter.start_ms >
+        PREVIOUS_CHAPTER_RESTART_THRESHOLD_MS
+    );
+
+  const canGoToNextChapter =
+    activeChapterIndex >= 0 &&
+    activeChapterIndex <
+      chapters.length - 1;
+
+
+  function goToPreviousChapter(): void {
+    if (
+      activeChapterIndex < 0 ||
+      activeChapter === null
+    ) {
+      return;
+    }
+
+    const elapsedInChapterMs =
+      Math.max(
+        0,
+        currentTimeMs -
+          activeChapter.start_ms,
+      );
+
+    const targetIndex =
+      elapsedInChapterMs >
+      PREVIOUS_CHAPTER_RESTART_THRESHOLD_MS
+        ? activeChapterIndex
+        : activeChapterIndex - 1;
+
+    if (targetIndex < 0) {
+      return;
+    }
+
+    jumpToChapter(
+      chapters[targetIndex],
+    );
+  }
+
+
+  function goToNextChapter(): void {
+    if (!canGoToNextChapter) {
+      return;
+    }
+
+    jumpToChapter(
+      chapters[
+        activeChapterIndex + 1
+      ],
+    );
+  }
+
+
   const activeChapterDurationMs =
     activeChapter === null
       ? 0
@@ -4958,6 +5022,48 @@ function M4bPlayer({
                 ? "chapter"
                 : "chapters"}
             </span>
+          </div>
+
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <button
+              aria-label="Previous chapter"
+              className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-cyan-400 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-slate-700 disabled:hover:text-slate-200"
+              disabled={
+                !canGoToPreviousChapter
+              }
+              onClick={
+                goToPreviousChapter
+              }
+              type="button"
+            >
+              <span
+                aria-hidden="true"
+                className="mr-2"
+              >
+                ⏮
+              </span>
+              Previous chapter
+            </button>
+
+            <button
+              aria-label="Next chapter"
+              className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-cyan-400 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-slate-700 disabled:hover:text-slate-200"
+              disabled={
+                !canGoToNextChapter
+              }
+              onClick={
+                goToNextChapter
+              }
+              type="button"
+            >
+              Next chapter
+              <span
+                aria-hidden="true"
+                className="ml-2"
+              >
+                ⏭
+              </span>
+            </button>
           </div>
 
           {activeChapter && (
