@@ -3963,9 +3963,20 @@ interface ChapterEndSleepTimerPreference {
 }
 
 
+interface ChapterEndPlusFiveSleepTimerPreference {
+  mode: "chapter-end-plus-5";
+  targetChapterEndMs: number;
+}
+
+
+type ChapterRelativeSleepTimerPreference =
+  | ChapterEndSleepTimerPreference
+  | ChapterEndPlusFiveSleepTimerPreference;
+
+
 type SleepTimerPreference =
   | TimedSleepTimerPreference
-  | ChapterEndSleepTimerPreference;
+  | ChapterRelativeSleepTimerPreference;
 
 
 interface SleepTimerEventDetail {
@@ -3994,6 +4005,9 @@ const SLEEP_TIMER_OPTIONS = [
   45,
   60,
 ] as const;
+
+const CHAPTER_END_PLUS_FIVE_MS =
+  300_000;
 
 
 function normalizeAudiobookVolume(
@@ -4131,7 +4145,10 @@ function readStoredSleepTimerPreference():
       targetChapterEndMs?: unknown;
     };
 
-    if (parsed.mode === "chapter-end") {
+    if (
+      parsed.mode === "chapter-end" ||
+      parsed.mode === "chapter-end-plus-5"
+    ) {
       const targetChapterEndMs =
         Number(
           parsed.targetChapterEndMs,
@@ -4144,7 +4161,7 @@ function readStoredSleepTimerPreference():
         targetChapterEndMs > 0
       ) {
         return {
-          mode: "chapter-end",
+          mode: parsed.mode,
           targetChapterEndMs,
         };
       }
@@ -4263,6 +4280,31 @@ function formatSleepTimerRemaining(
   return `${minutes}:${seconds
     .toString()
     .padStart(2, "0")}`;
+}
+
+
+function isChapterRelativeSleepTimerPreference(
+  preference: SleepTimerPreference | null,
+): preference is ChapterRelativeSleepTimerPreference {
+  return (
+    preference?.mode === "chapter-end" ||
+    preference?.mode === "chapter-end-plus-5"
+  );
+}
+
+
+function getChapterRelativeSleepTimerTargetMs(
+  preference: ChapterRelativeSleepTimerPreference,
+): number {
+  const offsetMs =
+    preference.mode === "chapter-end-plus-5"
+      ? CHAPTER_END_PLUS_FIVE_MS
+      : 0;
+
+  return (
+    preference.targetChapterEndMs +
+    offsetMs
+  );
 }
 
 
@@ -4953,8 +4995,9 @@ function ResumeAudioPlayer({
       readStoredSleepTimerPreference();
 
     if (
-      storedPreference?.mode ===
-      "chapter-end"
+      isChapterRelativeSleepTimerPreference(
+        storedPreference,
+      )
     ) {
       if (format !== "M4B") {
         storedPreference = null;
@@ -4966,8 +5009,9 @@ function ResumeAudioPlayer({
         chapterEndMs !== undefined
       ) {
         const reboundPreference:
-          ChapterEndSleepTimerPreference = {
-            mode: "chapter-end",
+          ChapterRelativeSleepTimerPreference = {
+            mode:
+              storedPreference.mode,
             targetChapterEndMs:
               chapterEndMs,
           };
@@ -5008,8 +5052,9 @@ function ResumeAudioPlayer({
   useEffect(() => {
     if (
       !isNowPlaying ||
-      sleepTimerPreference?.mode !==
-        "chapter-end"
+      !isChapterRelativeSleepTimerPreference(
+        sleepTimerPreference,
+      )
     ) {
       return;
     }
@@ -5030,8 +5075,9 @@ function ResumeAudioPlayer({
     }
 
     const reboundPreference:
-      ChapterEndSleepTimerPreference = {
-        mode: "chapter-end",
+      ChapterRelativeSleepTimerPreference = {
+        mode:
+          sleepTimerPreference.mode,
         targetChapterEndMs:
           chapterEndMs,
       };
@@ -5140,10 +5186,14 @@ function ResumeAudioPlayer({
       const currentTimeMs =
         audio.currentTime * 1000;
 
+      const targetStopMs =
+        getChapterRelativeSleepTimerTargetMs(
+          activeSleepTimerPreference,
+        );
+
       if (
         currentTimeMs + 50 <
-        activeSleepTimerPreference
-          .targetChapterEndMs
+        targetStopMs
       ) {
         return;
       }
@@ -5436,8 +5486,9 @@ function ResumeAudioPlayer({
 
   function handleSleepTimerSeeking(): void {
     if (
-      sleepTimerPreference?.mode !==
-      "chapter-end"
+      !isChapterRelativeSleepTimerPreference(
+        sleepTimerPreference,
+      )
     ) {
       return;
     }
@@ -5476,7 +5527,10 @@ function ResumeAudioPlayer({
       return;
     }
 
-    if (value === "chapter-end") {
+    if (
+      value === "chapter-end" ||
+      value === "chapter-end-plus-5"
+    ) {
       if (
         format !== "M4B" ||
         chapterEndMs === undefined
@@ -5485,8 +5539,8 @@ function ResumeAudioPlayer({
       }
 
       const preference:
-        ChapterEndSleepTimerPreference = {
-          mode: "chapter-end",
+        ChapterRelativeSleepTimerPreference = {
+          mode: value,
           targetChapterEndMs:
             chapterEndMs,
         };
@@ -5857,9 +5911,12 @@ function ResumeAudioPlayer({
                     : sleepTimerPreference.mode ===
                         "chapter-end"
                       ? "Sleep timer: end of chapter"
-                      : `Sleep timer: ${
-                          sleepTimerPreference.durationMinutes
-                        } minutes`
+                      : sleepTimerPreference.mode ===
+                          "chapter-end-plus-5"
+                        ? "Sleep timer: 5 minutes after chapter end"
+                        : `Sleep timer: ${
+                            sleepTimerPreference.durationMinutes
+                          } minutes`
                 }
                 value={
                   sleepTimerPreference === null
@@ -5867,9 +5924,12 @@ function ResumeAudioPlayer({
                     : sleepTimerPreference.mode ===
                         "chapter-end"
                       ? "chapter-end"
-                      : sleepTimerPreference
-                          .durationMinutes
-                          .toString()
+                      : sleepTimerPreference.mode ===
+                          "chapter-end-plus-5"
+                        ? "chapter-end-plus-5"
+                        : sleepTimerPreference
+                            .durationMinutes
+                            .toString()
                 }
               >
                 <option value="off">
@@ -5877,14 +5937,25 @@ function ResumeAudioPlayer({
                 </option>
 
                 {format === "M4B" && (
-                  <option
-                    disabled={
-                      chapterEndMs === undefined
-                    }
-                    value="chapter-end"
-                  >
-                    End of chapter
-                  </option>
+                  <>
+                    <option
+                      disabled={
+                        chapterEndMs === undefined
+                      }
+                      value="chapter-end"
+                    >
+                      End of chapter
+                    </option>
+
+                    <option
+                      disabled={
+                        chapterEndMs === undefined
+                      }
+                      value="chapter-end-plus-5"
+                    >
+                      5 min after chapter
+                    </option>
+                  </>
                 )}
 
                 {SLEEP_TIMER_OPTIONS.map(
@@ -5952,12 +6023,15 @@ function ResumeAudioPlayer({
                     {sleepTimerPreference.mode ===
                     "chapter-end"
                       ? "Sleep end of chapter"
-                      : sleepTimerNow > 0
-                        ? `Sleep ${formatSleepTimerRemaining(
-                            sleepTimerPreference.expiresAt,
-                            sleepTimerNow,
-                          )}`
-                        : "Sleep timer"}
+                      : sleepTimerPreference.mode ===
+                          "chapter-end-plus-5"
+                        ? "Sleep 5 min after chapter"
+                        : sleepTimerNow > 0
+                          ? `Sleep ${formatSleepTimerRemaining(
+                              sleepTimerPreference.expiresAt,
+                              sleepTimerNow,
+                            )}`
+                          : "Sleep timer"}
                   </span>
                 )}
               </div>
