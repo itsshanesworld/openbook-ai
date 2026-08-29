@@ -4006,8 +4006,37 @@ const SLEEP_TIMER_OPTIONS = [
   60,
 ] as const;
 
+const SLEEP_TIMER_MIN_MINUTES =
+  1;
+
+const SLEEP_TIMER_MAX_MINUTES =
+  720;
+
 const CHAPTER_END_PLUS_FIVE_MS =
   300_000;
+
+
+function isValidSleepTimerDuration(
+  durationMinutes: number,
+): boolean {
+  return (
+    Number.isInteger(durationMinutes) &&
+    durationMinutes >=
+      SLEEP_TIMER_MIN_MINUTES &&
+    durationMinutes <=
+      SLEEP_TIMER_MAX_MINUTES
+  );
+}
+
+
+function isPresetSleepTimerDuration(
+  durationMinutes: number,
+): boolean {
+  return SLEEP_TIMER_OPTIONS.some(
+    (option) =>
+      option === durationMinutes,
+  );
+}
 
 
 function normalizeAudiobookVolume(
@@ -4184,9 +4213,8 @@ function readStoredSleepTimerPreference():
       );
 
     const validDuration =
-      SLEEP_TIMER_OPTIONS.some(
-        (option) =>
-          option === durationMinutes,
+      isValidSleepTimerDuration(
+        durationMinutes,
       );
 
     const validMode =
@@ -4427,6 +4455,16 @@ function ResumeAudioPlayer({
     sleepTimerNow,
     setSleepTimerNow,
   ] = useState(0);
+
+  const [
+    customSleepTimerOpen,
+    setCustomSleepTimerOpen,
+  ] = useState(false);
+
+  const [
+    customSleepMinutes,
+    setCustomSleepMinutes,
+  ] = useState("30");
 
   const previousNonZeroVolumeRef =
     useRef(1);
@@ -5505,6 +5543,10 @@ function ResumeAudioPlayer({
   function handleSleepTimerChange(
     value: string,
   ): void {
+    setCustomSleepTimerOpen(
+      false,
+    );
+
     sleepTimerNeedsChapterRebindRef.current =
       false;
 
@@ -5563,24 +5605,21 @@ function ResumeAudioPlayer({
     const durationMinutes =
       Number(value);
 
-    const validDuration =
-      SLEEP_TIMER_OPTIONS.find(
-        (option) =>
-          option === durationMinutes,
-      );
-
-    if (validDuration === undefined) {
+    if (
+      !isValidSleepTimerDuration(
+        durationMinutes,
+      )
+    ) {
       return;
     }
 
     const preference:
       TimedSleepTimerPreference = {
         mode: "timed",
-        durationMinutes:
-          validDuration,
+        durationMinutes,
         expiresAt:
           Date.now() +
-          validDuration * 60_000,
+          durationMinutes * 60_000,
       };
 
     setSleepTimerPreference(
@@ -5593,6 +5632,54 @@ function ResumeAudioPlayer({
 
     storeSleepTimerPreference(
       preference,
+    );
+  }
+
+
+  function handleSleepTimerSelectionChange(
+    value: string,
+  ): void {
+    if (value === "custom") {
+      if (
+        sleepTimerPreference?.mode ===
+        "timed"
+      ) {
+        setCustomSleepMinutes(
+          sleepTimerPreference
+            .durationMinutes
+            .toString(),
+        );
+      }
+
+      setCustomSleepTimerOpen(
+        true,
+      );
+
+      return;
+    }
+
+    handleSleepTimerChange(
+      value,
+    );
+  }
+
+
+  function handleCustomSleepTimerStart(): void {
+    const durationMinutes =
+      Number(
+        customSleepMinutes,
+      );
+
+    if (
+      !isValidSleepTimerDuration(
+        durationMinutes,
+      )
+    ) {
+      return;
+    }
+
+    handleSleepTimerChange(
+      durationMinutes.toString(),
     );
   }
 
@@ -5806,7 +5893,7 @@ function ResumeAudioPlayer({
               )}
             </div>
 
-            <div className="flex w-full min-w-0 items-center gap-2 lg:w-auto lg:shrink-0">
+            <div className="flex w-full min-w-0 flex-wrap items-center gap-2 lg:w-auto lg:shrink-0 lg:flex-nowrap">
               <label
                 className="sr-only"
                 htmlFor={`playback-rate-${playerKey}`}
@@ -5910,7 +5997,7 @@ function ResumeAudioPlayer({
                 className="h-9 shrink-0 rounded-lg border border-slate-700 bg-slate-950 px-2 text-xs font-semibold text-slate-200 outline-none transition focus:border-cyan-400"
                 id={`sleep-timer-${playerKey}`}
                 onChange={(event) =>
-                  handleSleepTimerChange(
+                  handleSleepTimerSelectionChange(
                     event.target.value,
                   )
                 }
@@ -5977,7 +6064,86 @@ function ResumeAudioPlayer({
                     </option>
                   ),
                 )}
+
+                {sleepTimerPreference?.mode ===
+                  "timed" &&
+                  !isPresetSleepTimerDuration(
+                    sleepTimerPreference
+                      .durationMinutes,
+                  ) && (
+                    <option
+                      value={
+                        sleepTimerPreference
+                          .durationMinutes
+                      }
+                    >
+                      {
+                        sleepTimerPreference
+                          .durationMinutes
+                      }{" "}
+                      min custom
+                    </option>
+                  )}
+
+                <option value="custom">
+                  Custom…
+                </option>
               </select>
+
+              {customSleepTimerOpen && (
+                <div className="flex shrink-0 items-center gap-2">
+                  <label
+                    className="sr-only"
+                    htmlFor={`custom-sleep-timer-${playerKey}`}
+                  >
+                    Custom sleep timer minutes
+                  </label>
+
+                  <input
+                    aria-label="Custom sleep timer minutes"
+                    className="h-9 w-20 rounded-lg border border-slate-700 bg-slate-950 px-2 text-xs font-semibold text-slate-200 outline-none transition focus:border-cyan-400"
+                    id={`custom-sleep-timer-${playerKey}`}
+                    inputMode="numeric"
+                    max={
+                      SLEEP_TIMER_MAX_MINUTES
+                    }
+                    min={
+                      SLEEP_TIMER_MIN_MINUTES
+                    }
+                    onChange={(event) =>
+                      setCustomSleepMinutes(
+                        event.target.value,
+                      )
+                    }
+                    placeholder="Minutes"
+                    step="1"
+                    title={`Enter ${SLEEP_TIMER_MIN_MINUTES}–${SLEEP_TIMER_MAX_MINUTES} minutes`}
+                    type="number"
+                    value={
+                      customSleepMinutes
+                    }
+                  />
+
+                  <button
+                    aria-label="Start custom sleep timer"
+                    className="h-9 shrink-0 rounded-lg border border-cyan-500/50 px-3 text-xs font-semibold text-cyan-200 transition hover:border-cyan-300 disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-500"
+                    disabled={
+                      !isValidSleepTimerDuration(
+                        Number(
+                          customSleepMinutes,
+                        ),
+                      )
+                    }
+                    onClick={
+                      handleCustomSleepTimerStart
+                    }
+                    title={`Start custom sleep timer (${SLEEP_TIMER_MIN_MINUTES}–${SLEEP_TIMER_MAX_MINUTES} minutes)`}
+                    type="button"
+                  >
+                    Start
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="min-w-0 w-full lg:flex-1">
