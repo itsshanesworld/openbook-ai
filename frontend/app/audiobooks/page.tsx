@@ -5597,6 +5597,15 @@ function ResumeAudioPlayer({
   }
 
 
+  function handleQuickSleepTimerClick(): void {
+    handleSleepTimerChange(
+      sleepTimerPreference === null
+        ? "30"
+        : "off",
+    );
+  }
+
+
   function showFullPlayer(): void {
     playerContainerRef.current?.scrollIntoView(
       {
@@ -6038,6 +6047,33 @@ function ResumeAudioPlayer({
             </div>
 
             <div className="flex w-full shrink-0 items-center justify-between gap-2 lg:w-auto lg:justify-start">
+              <button
+                aria-label={
+                  sleepTimerPreference === null
+                    ? "Start 30-minute sleep timer"
+                    : "Cancel sleep timer"
+                }
+                aria-pressed={
+                  sleepTimerPreference !== null
+                }
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border text-sm transition ${
+                  sleepTimerPreference === null
+                    ? "border-slate-700 text-slate-200 hover:border-cyan-400 hover:text-cyan-200"
+                    : "border-amber-400/70 bg-amber-400/10 text-amber-200 hover:border-amber-300"
+                }`}
+                onClick={
+                  handleQuickSleepTimerClick
+                }
+                title={
+                  sleepTimerPreference === null
+                    ? "Start 30-minute sleep timer"
+                    : "Cancel sleep timer"
+                }
+                type="button"
+              >
+                🌙
+              </button>
+
               <button
                 aria-controls={`audiobook-shortcuts-${playerKey}`}
                 aria-expanded={
