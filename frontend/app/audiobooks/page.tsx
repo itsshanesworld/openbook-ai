@@ -3957,6 +3957,11 @@ interface TimedSleepTimerPreference {
 }
 
 
+interface AudiobookEndSleepTimerPreference {
+  mode: "audiobook-end";
+}
+
+
 interface ChapterEndSleepTimerPreference {
   mode: "chapter-end";
   targetChapterEndMs: number;
@@ -3976,6 +3981,7 @@ type ChapterRelativeSleepTimerPreference =
 
 type SleepTimerPreference =
   | TimedSleepTimerPreference
+  | AudiobookEndSleepTimerPreference
   | ChapterRelativeSleepTimerPreference;
 
 
@@ -4173,6 +4179,14 @@ function readStoredSleepTimerPreference():
       mode?: unknown;
       targetChapterEndMs?: unknown;
     };
+
+    if (
+      parsed.mode === "audiobook-end"
+    ) {
+      return {
+        mode: "audiobook-end",
+      };
+    }
 
     if (
       parsed.mode === "chapter-end" ||
@@ -5194,6 +5208,13 @@ function ResumeAudioPlayer({
 
       if (
         activeSleepTimerPreference.mode ===
+        "audiobook-end"
+      ) {
+        return;
+      }
+
+      if (
+        activeSleepTimerPreference.mode ===
         "timed"
       ) {
         if (
@@ -5243,7 +5264,9 @@ function ResumeAudioPlayer({
 
     const intervalMilliseconds =
       activeSleepTimerPreference.mode ===
-      "timed"
+      "timed" ||
+      activeSleepTimerPreference.mode ===
+        "audiobook-end"
         ? 1_000
         : 250;
 
@@ -5564,6 +5587,27 @@ function ResumeAudioPlayer({
 
       storeSleepTimerPreference(
         null,
+      );
+
+      return;
+    }
+
+    if (value === "audiobook-end") {
+      const preference:
+        AudiobookEndSleepTimerPreference = {
+          mode: "audiobook-end",
+        };
+
+      setSleepTimerPreference(
+        preference,
+      );
+
+      setSleepTimerNow(
+        Date.now(),
+      );
+
+      storeSleepTimerPreference(
+        preference,
       );
 
       return;
@@ -6005,31 +6049,41 @@ function ResumeAudioPlayer({
                   sleepTimerPreference === null
                     ? "Sleep timer off"
                     : sleepTimerPreference.mode ===
-                        "chapter-end"
-                      ? "Sleep timer: end of chapter"
+                        "audiobook-end"
+                      ? "Sleep timer: end of audiobook"
                       : sleepTimerPreference.mode ===
-                          "chapter-end-plus-5"
-                        ? "Sleep timer: 5 minutes after chapter end"
-                        : `Sleep timer: ${
-                            sleepTimerPreference.durationMinutes
-                          } minutes`
+                          "chapter-end"
+                      ? "Sleep timer: end of chapter"
+                        : sleepTimerPreference.mode ===
+                            "chapter-end-plus-5"
+                          ? "Sleep timer: 5 minutes after chapter end"
+                          : `Sleep timer: ${
+                              sleepTimerPreference.durationMinutes
+                            } minutes`
                 }
                 value={
                   sleepTimerPreference === null
                     ? "off"
                     : sleepTimerPreference.mode ===
-                        "chapter-end"
-                      ? "chapter-end"
+                        "audiobook-end"
+                      ? "audiobook-end"
                       : sleepTimerPreference.mode ===
-                          "chapter-end-plus-5"
-                        ? "chapter-end-plus-5"
-                        : sleepTimerPreference
-                            .durationMinutes
-                            .toString()
+                          "chapter-end"
+                      ? "chapter-end"
+                        : sleepTimerPreference.mode ===
+                            "chapter-end-plus-5"
+                          ? "chapter-end-plus-5"
+                          : sleepTimerPreference
+                              .durationMinutes
+                              .toString()
                 }
               >
                 <option value="off">
                   Sleep off
+                </option>
+
+                <option value="audiobook-end">
+                  End of audiobook
                 </option>
 
                 {format === "M4B" && (
@@ -6196,17 +6250,20 @@ function ResumeAudioPlayer({
                 {sleepTimerPreference !== null && (
                   <span className="shrink-0 font-semibold text-amber-300">
                     {sleepTimerPreference.mode ===
-                    "chapter-end"
-                      ? "Sleep end of chapter"
+                    "audiobook-end"
+                      ? "Sleep end of audiobook"
                       : sleepTimerPreference.mode ===
-                          "chapter-end-plus-5"
-                        ? "Sleep 5 min after chapter"
-                        : sleepTimerNow > 0
-                          ? `Sleep ${formatSleepTimerRemaining(
-                              sleepTimerPreference.expiresAt,
-                              sleepTimerNow,
-                            )}`
-                          : "Sleep timer"}
+                          "chapter-end"
+                        ? "Sleep end of chapter"
+                        : sleepTimerPreference.mode ===
+                            "chapter-end-plus-5"
+                          ? "Sleep 5 min after chapter"
+                          : sleepTimerNow > 0
+                            ? `Sleep ${formatSleepTimerRemaining(
+                                sleepTimerPreference.expiresAt,
+                                sleepTimerNow,
+                              )}`
+                            : "Sleep timer"}
                   </span>
                 )}
               </div>
