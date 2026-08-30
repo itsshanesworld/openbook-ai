@@ -5958,6 +5958,28 @@ function ResumeAudioPlayer({
   }
 
 
+  function handleClearRecentCustomSleepDurations(): void {
+    if (
+      recentCustomSleepDurations.length ===
+      0
+    ) {
+      return;
+    }
+
+    setRecentCustomSleepDurations(
+      [],
+    );
+
+    storeRecentCustomSleepDurations(
+      [],
+    );
+
+    showSleepTimerToast(
+      "Recent sleep timers cleared.",
+    );
+  }
+
+
   function handleSleepTimerSelectionChange(
     value: string,
   ): void {
@@ -6469,6 +6491,21 @@ function ResumeAudioPlayer({
                   Custom…
                 </option>
               </select>
+
+              {recentCustomSleepDurations.length >
+                0 && (
+                <button
+                  aria-label="Clear recent custom sleep timers"
+                  className="h-9 shrink-0 rounded-lg border border-slate-700 px-3 text-xs font-semibold text-slate-300 transition hover:border-amber-400 hover:text-amber-200"
+                  onClick={
+                    handleClearRecentCustomSleepDurations
+                  }
+                  title="Clear recent custom sleep timers"
+                  type="button"
+                >
+                  Clear recent
+                </button>
+              )}
 
               {customSleepTimerOpen && (
                 <div className="flex shrink-0 items-center gap-2">
