@@ -4021,6 +4021,9 @@ const SLEEP_TIMER_MAX_MINUTES =
 const CHAPTER_END_PLUS_FIVE_MS =
   300_000;
 
+const SLEEP_TIMER_TOAST_DURATION_MS =
+  3_000;
+
 
 function isValidSleepTimerDuration(
   durationMinutes: number,
@@ -4480,6 +4483,13 @@ function ResumeAudioPlayer({
     setCustomSleepMinutes,
   ] = useState("30");
 
+  const [
+    sleepTimerToastMessage,
+    setSleepTimerToastMessage,
+  ] = useState<string | null>(
+    null,
+  );
+
   const previousNonZeroVolumeRef =
     useRef(1);
 
@@ -4489,6 +4499,11 @@ function ResumeAudioPlayer({
   const sleepTimerNeedsInitialChapterBindRef =
     useRef(false);
 
+  const sleepTimerToastTimeoutRef =
+    useRef<number | null>(
+      null,
+    );
+
   const [
     shortcutsHelpOpen,
     setShortcutsHelpOpen,
@@ -4496,6 +4511,20 @@ function ResumeAudioPlayer({
 
   const playerKey =
     `${jobId}:${format.toLowerCase()}`;
+
+
+  useEffect(() => {
+    return () => {
+      if (
+        sleepTimerToastTimeoutRef.current !==
+        null
+      ) {
+        window.clearTimeout(
+          sleepTimerToastTimeoutRef.current,
+        );
+      }
+    };
+  }, []);
 
 
   useEffect(() => {
@@ -4890,6 +4919,9 @@ function ResumeAudioPlayer({
 
 
   function handleEnded(): void {
+    const completedSleepTimerPreference =
+      sleepTimerPreference;
+
     setSleepTimerPreference(
       null,
     );
@@ -4897,6 +4929,18 @@ function ResumeAudioPlayer({
     storeSleepTimerPreference(
       null,
     );
+
+    if (
+      completedSleepTimerPreference !==
+      null
+    ) {
+      showSleepTimerToast(
+        completedSleepTimerPreference.mode ===
+        "audiobook-end"
+          ? "Sleep timer finished at end of audiobook."
+          : "Sleep timer cleared because the audiobook ended.",
+      );
+    }
 
     recordLastPlayed(
       jobId,
@@ -5195,6 +5239,10 @@ function ResumeAudioPlayer({
 
       storeSleepTimerPreference(
         null,
+      );
+
+      showSleepTimerToast(
+        "Sleep timer finished. Playback paused.",
       );
     }
 
@@ -5563,6 +5611,44 @@ function ResumeAudioPlayer({
   }
 
 
+  function showSleepTimerToast(
+    message: string,
+  ): void {
+    if (
+      sleepTimerToastTimeoutRef.current !==
+      null
+    ) {
+      window.clearTimeout(
+        sleepTimerToastTimeoutRef.current,
+      );
+    }
+
+    setSleepTimerToastMessage(
+      message,
+    );
+
+    sleepTimerToastTimeoutRef.current =
+      window.setTimeout(
+        () => {
+          setSleepTimerToastMessage(
+            null,
+          );
+
+          sleepTimerToastTimeoutRef.current =
+            null;
+        },
+        SLEEP_TIMER_TOAST_DURATION_MS,
+      );
+  }
+
+
+  function getSleepTimerActionPrefix(): string {
+    return sleepTimerPreference === null
+      ? "Sleep timer set:"
+      : "Sleep timer changed:";
+  }
+
+
   function handleSleepTimerChange(
     value: string,
   ): void {
@@ -5577,6 +5663,9 @@ function ResumeAudioPlayer({
       false;
 
     if (value === "off") {
+      const hadActiveSleepTimer =
+        sleepTimerPreference !== null;
+
       setSleepTimerPreference(
         null,
       );
@@ -5588,6 +5677,12 @@ function ResumeAudioPlayer({
       storeSleepTimerPreference(
         null,
       );
+
+      if (hadActiveSleepTimer) {
+        showSleepTimerToast(
+          "Sleep timer cancelled.",
+        );
+      }
 
       return;
     }
@@ -5608,6 +5703,10 @@ function ResumeAudioPlayer({
 
       storeSleepTimerPreference(
         preference,
+      );
+
+      showSleepTimerToast(
+        `${getSleepTimerActionPrefix()} end of audiobook.`,
       );
 
       return;
@@ -5643,6 +5742,12 @@ function ResumeAudioPlayer({
         preference,
       );
 
+      showSleepTimerToast(
+        value === "chapter-end"
+          ? `${getSleepTimerActionPrefix()} end of chapter.`
+          : `${getSleepTimerActionPrefix()} 5 minutes after chapter.`,
+      );
+
       return;
     }
 
@@ -5676,6 +5781,14 @@ function ResumeAudioPlayer({
 
     storeSleepTimerPreference(
       preference,
+    );
+
+    showSleepTimerToast(
+      `${getSleepTimerActionPrefix()} ${durationMinutes} ${
+        durationMinutes === 1
+          ? "minute"
+          : "minutes"
+      }.`,
     );
   }
 
@@ -5849,6 +5962,17 @@ function ResumeAudioPlayer({
         </p>
       ) : null}
 
+      {sleepTimerToastMessage !== null && (
+        <div
+          aria-atomic="true"
+          aria-live="polite"
+          className="fixed left-1/2 top-4 z-[70] max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-xl border border-amber-400/50 bg-slate-950/95 px-4 py-3 text-center text-sm font-semibold text-amber-100 shadow-2xl shadow-black/50 backdrop-blur"
+          role="status"
+        >
+          🌙 {sleepTimerToastMessage}
+        </div>
+      )}
+
       {isNowPlaying && (
         <div className="fixed inset-x-2 bottom-2 z-50 mx-auto max-w-4xl overflow-hidden rounded-2xl border border-cyan-500/40 bg-slate-950/95 shadow-2xl shadow-black/50 backdrop-blur sm:inset-x-4 sm:bottom-4">
           <div
@@ -5863,8 +5987,8 @@ function ResumeAudioPlayer({
             />
           </div>
 
-          <div className="grid gap-2 px-3 py-2 sm:px-4 sm:py-3 lg:flex lg:items-center lg:gap-3">
-            <div className="flex w-full items-center justify-center gap-2 lg:w-auto lg:shrink-0 lg:justify-start">
+          <div className="grid gap-2 px-3 py-2 sm:px-4 sm:py-3 lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:items-center lg:gap-3">
+            <div className="flex w-full items-center justify-center gap-2 lg:col-start-1 lg:row-start-1 lg:w-auto lg:shrink-0 lg:justify-start">
               {onPreviousChapter && (
                 <button
                   aria-label="Previous M4B chapter"
@@ -5937,7 +6061,7 @@ function ResumeAudioPlayer({
               )}
             </div>
 
-            <div className="flex w-full min-w-0 flex-wrap items-center gap-2 lg:w-auto lg:shrink-0 lg:flex-nowrap">
+            <div className="flex w-full min-w-0 flex-wrap items-center gap-2 lg:col-span-3 lg:row-start-2 lg:w-full lg:justify-center">
               <label
                 className="sr-only"
                 htmlFor={`playback-rate-${playerKey}`}
@@ -6200,7 +6324,7 @@ function ResumeAudioPlayer({
               )}
             </div>
 
-            <div className="min-w-0 w-full lg:flex-1">
+            <div className="min-w-0 w-full lg:col-start-2 lg:row-start-1">
               <div className="flex min-w-0 items-center gap-2">
                 <span className="shrink-0 rounded-full bg-cyan-500/15 px-2 py-0.5 text-[10px] font-bold text-cyan-300">
                   {format}
@@ -6269,7 +6393,7 @@ function ResumeAudioPlayer({
               </div>
             </div>
 
-            <div className="flex w-full shrink-0 items-center justify-between gap-2 lg:w-auto lg:justify-start">
+            <div className="flex w-full shrink-0 items-center justify-between gap-2 lg:col-start-3 lg:row-start-1 lg:w-auto lg:justify-start">
               <button
                 aria-label={
                   sleepTimerPreference === null
