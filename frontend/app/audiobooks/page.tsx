@@ -4005,6 +4005,15 @@ const SLEEP_TIMER_STORAGE_KEY =
 const SLEEP_TIMER_EVENT =
   "openbook-audiobook-sleep-timer-changed";
 
+const RECENT_CUSTOM_SLEEP_TIMER_STORAGE_KEY =
+  "openbook-audiobook-recent-custom-sleep-timers-v1";
+
+const RECENT_CUSTOM_SLEEP_TIMER_EVENT =
+  "openbook-audiobook-recent-custom-sleep-timers-changed";
+
+const RECENT_CUSTOM_SLEEP_TIMER_LIMIT =
+  3;
+
 const SLEEP_TIMER_OPTIONS = [
   15,
   30,
@@ -4044,6 +4053,120 @@ function isPresetSleepTimerDuration(
   return SLEEP_TIMER_OPTIONS.some(
     (option) =>
       option === durationMinutes,
+  );
+}
+
+
+function normalizeRecentCustomSleepDurations(
+  value: unknown,
+): number[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const durations: number[] = [];
+
+  for (const candidate of value) {
+    const durationMinutes =
+      Number(candidate);
+
+    if (
+      !isValidSleepTimerDuration(
+        durationMinutes,
+      ) ||
+      isPresetSleepTimerDuration(
+        durationMinutes,
+      ) ||
+      durations.includes(
+        durationMinutes,
+      )
+    ) {
+      continue;
+    }
+
+    durations.push(
+      durationMinutes,
+    );
+
+    if (
+      durations.length >=
+      RECENT_CUSTOM_SLEEP_TIMER_LIMIT
+    ) {
+      break;
+    }
+  }
+
+  return durations;
+}
+
+
+function readStoredRecentCustomSleepDurations():
+  number[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  try {
+    const storedValue =
+      window.localStorage.getItem(
+        RECENT_CUSTOM_SLEEP_TIMER_STORAGE_KEY,
+      );
+
+    if (storedValue === null) {
+      return [];
+    }
+
+    return normalizeRecentCustomSleepDurations(
+      JSON.parse(
+        storedValue,
+      ),
+    );
+  } catch {
+    return [];
+  }
+}
+
+
+function storeRecentCustomSleepDurations(
+  durations: number[],
+): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const normalizedDurations =
+    normalizeRecentCustomSleepDurations(
+      durations,
+    );
+
+  try {
+    if (
+      normalizedDurations.length === 0
+    ) {
+      window.localStorage.removeItem(
+        RECENT_CUSTOM_SLEEP_TIMER_STORAGE_KEY,
+      );
+    } else {
+      window.localStorage.setItem(
+        RECENT_CUSTOM_SLEEP_TIMER_STORAGE_KEY,
+        JSON.stringify(
+          normalizedDurations,
+        ),
+      );
+    }
+  } catch {
+  }
+
+  window.dispatchEvent(
+    new CustomEvent(
+      RECENT_CUSTOM_SLEEP_TIMER_EVENT,
+      {
+        detail: {
+          durations:
+            normalizedDurations,
+        },
+      },
+    ),
   );
 }
 
@@ -4484,6 +4607,13 @@ function ResumeAudioPlayer({
   ] = useState("30");
 
   const [
+    recentCustomSleepDurations,
+    setRecentCustomSleepDurations,
+  ] = useState<number[]>(
+    [],
+  );
+
+  const [
     sleepTimerToastMessage,
     setSleepTimerToastMessage,
   ] = useState<string | null>(
@@ -4523,6 +4653,41 @@ function ResumeAudioPlayer({
           sleepTimerToastTimeoutRef.current,
         );
       }
+    };
+  }, []);
+
+
+  useEffect(() => {
+    setRecentCustomSleepDurations(
+      readStoredRecentCustomSleepDurations(),
+    );
+
+    function handleRecentCustomSleepTimers(
+      event: Event,
+    ): void {
+      const customEvent =
+        event as CustomEvent<{
+          durations: number[];
+        }>;
+
+      setRecentCustomSleepDurations(
+        normalizeRecentCustomSleepDurations(
+          customEvent.detail
+            ?.durations,
+        ),
+      );
+    }
+
+    window.addEventListener(
+      RECENT_CUSTOM_SLEEP_TIMER_EVENT,
+      handleRecentCustomSleepTimers,
+    );
+
+    return () => {
+      window.removeEventListener(
+        RECENT_CUSTOM_SLEEP_TIMER_EVENT,
+        handleRecentCustomSleepTimers,
+      );
     };
   }, []);
 
@@ -5835,6 +6000,28 @@ function ResumeAudioPlayer({
       return;
     }
 
+    if (
+      !isPresetSleepTimerDuration(
+        durationMinutes,
+      )
+    ) {
+      const nextRecentDurations =
+        normalizeRecentCustomSleepDurations(
+          [
+            durationMinutes,
+            ...recentCustomSleepDurations,
+          ],
+        );
+
+      setRecentCustomSleepDurations(
+        nextRecentDurations,
+      );
+
+      storeRecentCustomSleepDurations(
+        nextRecentDurations,
+      );
+    }
+
     handleSleepTimerChange(
       durationMinutes.toString(),
     );
@@ -6243,9 +6430,24 @@ function ResumeAudioPlayer({
                   ),
                 )}
 
+                {recentCustomSleepDurations.map(
+                  (minutes) => (
+                    <option
+                      key={`recent-${minutes}`}
+                      value={minutes}
+                    >
+                      Recent: {minutes} min
+                    </option>
+                  ),
+                )}
+
                 {sleepTimerPreference?.mode ===
                   "timed" &&
                   !isPresetSleepTimerDuration(
+                    sleepTimerPreference
+                      .durationMinutes,
+                  ) &&
+                  !recentCustomSleepDurations.includes(
                     sleepTimerPreference
                       .durationMinutes,
                   ) && (
