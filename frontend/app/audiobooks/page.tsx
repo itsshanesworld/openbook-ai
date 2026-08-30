@@ -4014,6 +4014,12 @@ const RECENT_CUSTOM_SLEEP_TIMER_EVENT =
 const RECENT_CUSTOM_SLEEP_TIMER_LIMIT =
   3;
 
+const FAVORITE_SLEEP_TIMER_STORAGE_KEY =
+  "openbook-audiobook-favorite-sleep-timer-v1";
+
+const FAVORITE_SLEEP_TIMER_EVENT =
+  "openbook-audiobook-favorite-sleep-timer-changed";
+
 const SLEEP_TIMER_OPTIONS = [
   15,
   30,
@@ -4164,6 +4170,95 @@ function storeRecentCustomSleepDurations(
         detail: {
           durations:
             normalizedDurations,
+        },
+      },
+    ),
+  );
+}
+
+
+function normalizeFavoriteSleepTimerDuration(
+  value: unknown,
+): number | null {
+  const durationMinutes =
+    Number(value);
+
+  if (
+    !isValidSleepTimerDuration(
+      durationMinutes,
+    )
+  ) {
+    return null;
+  }
+
+  return durationMinutes;
+}
+
+
+function readStoredFavoriteSleepTimerDuration():
+  number | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const storedValue =
+      window.localStorage.getItem(
+        FAVORITE_SLEEP_TIMER_STORAGE_KEY,
+      );
+
+    if (storedValue === null) {
+      return null;
+    }
+
+    return normalizeFavoriteSleepTimerDuration(
+      JSON.parse(
+        storedValue,
+      ),
+    );
+  } catch {
+    return null;
+  }
+}
+
+
+function storeFavoriteSleepTimerDuration(
+  durationMinutes: number | null,
+): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const normalizedDuration =
+    durationMinutes === null
+      ? null
+      : normalizeFavoriteSleepTimerDuration(
+          durationMinutes,
+        );
+
+  try {
+    if (normalizedDuration === null) {
+      window.localStorage.removeItem(
+        FAVORITE_SLEEP_TIMER_STORAGE_KEY,
+      );
+    } else {
+      window.localStorage.setItem(
+        FAVORITE_SLEEP_TIMER_STORAGE_KEY,
+        JSON.stringify(
+          normalizedDuration,
+        ),
+      );
+    }
+  } catch {
+  }
+
+  window.dispatchEvent(
+    new CustomEvent(
+      FAVORITE_SLEEP_TIMER_EVENT,
+      {
+        detail: {
+          durationMinutes:
+            normalizedDuration,
         },
       },
     ),
@@ -4614,6 +4709,13 @@ function ResumeAudioPlayer({
   );
 
   const [
+    favoriteSleepTimerDuration,
+    setFavoriteSleepTimerDuration,
+  ] = useState<number | null>(
+    null,
+  );
+
+  const [
     sleepTimerToastMessage,
     setSleepTimerToastMessage,
   ] = useState<string | null>(
@@ -4687,6 +4789,42 @@ function ResumeAudioPlayer({
       window.removeEventListener(
         RECENT_CUSTOM_SLEEP_TIMER_EVENT,
         handleRecentCustomSleepTimers,
+      );
+    };
+  }, []);
+
+
+  useEffect(() => {
+    setFavoriteSleepTimerDuration(
+      readStoredFavoriteSleepTimerDuration(),
+    );
+
+    function handleFavoriteSleepTimer(
+      event: Event,
+    ): void {
+      const customEvent =
+        event as CustomEvent<{
+          durationMinutes:
+            number | null;
+        }>;
+
+      setFavoriteSleepTimerDuration(
+        normalizeFavoriteSleepTimerDuration(
+          customEvent.detail
+            ?.durationMinutes,
+        ),
+      );
+    }
+
+    window.addEventListener(
+      FAVORITE_SLEEP_TIMER_EVENT,
+      handleFavoriteSleepTimer,
+    );
+
+    return () => {
+      window.removeEventListener(
+        FAVORITE_SLEEP_TIMER_EVENT,
+        handleFavoriteSleepTimer,
       );
     };
   }, []);
@@ -5958,6 +6096,66 @@ function ResumeAudioPlayer({
   }
 
 
+  function handleFavoriteSleepTimerChange(): void {
+    const durationMinutes =
+      Number(
+        customSleepMinutes,
+      );
+
+    if (
+      !isValidSleepTimerDuration(
+        durationMinutes,
+      )
+    ) {
+      return;
+    }
+
+    if (
+      favoriteSleepTimerDuration ===
+      durationMinutes
+    ) {
+      setFavoriteSleepTimerDuration(
+        null,
+      );
+
+      storeFavoriteSleepTimerDuration(
+        null,
+      );
+
+      showSleepTimerToast(
+        "Favorite sleep timer removed.",
+      );
+
+      return;
+    }
+
+    const hadFavorite =
+      favoriteSleepTimerDuration !== null;
+
+    setFavoriteSleepTimerDuration(
+      durationMinutes,
+    );
+
+    storeFavoriteSleepTimerDuration(
+      durationMinutes,
+    );
+
+    showSleepTimerToast(
+      hadFavorite
+        ? `Favorite sleep timer changed to ${durationMinutes} ${
+            durationMinutes === 1
+              ? "minute"
+              : "minutes"
+          }.`
+        : `Favorite sleep timer saved: ${durationMinutes} ${
+            durationMinutes === 1
+              ? "minute"
+              : "minutes"
+          }.`,
+    );
+  }
+
+
   function handleClearRecentCustomSleepDurations(): void {
     if (
       recentCustomSleepDurations.length ===
@@ -6441,7 +6639,23 @@ function ResumeAudioPlayer({
                   </>
                 )}
 
-                {SLEEP_TIMER_OPTIONS.map(
+                {favoriteSleepTimerDuration !==
+                  null && (
+                  <option
+                    value={
+                      favoriteSleepTimerDuration
+                    }
+                  >
+                    ★ Favorite:{" "}
+                    {favoriteSleepTimerDuration} min
+                  </option>
+                )}
+
+                {SLEEP_TIMER_OPTIONS.filter(
+                  (minutes) =>
+                    minutes !==
+                    favoriteSleepTimerDuration,
+                ).map(
                   (minutes) => (
                     <option
                       key={minutes}
@@ -6452,16 +6666,22 @@ function ResumeAudioPlayer({
                   ),
                 )}
 
-                {recentCustomSleepDurations.map(
-                  (minutes) => (
-                    <option
-                      key={`recent-${minutes}`}
-                      value={minutes}
-                    >
-                      Recent: {minutes} min
-                    </option>
-                  ),
-                )}
+                {recentCustomSleepDurations
+                  .filter(
+                    (minutes) =>
+                      minutes !==
+                      favoriteSleepTimerDuration,
+                  )
+                  .map(
+                    (minutes) => (
+                      <option
+                        key={`recent-${minutes}`}
+                        value={minutes}
+                      >
+                        Recent: {minutes} min
+                      </option>
+                    ),
+                  )}
 
                 {sleepTimerPreference?.mode ===
                   "timed" &&
@@ -6472,7 +6692,10 @@ function ResumeAudioPlayer({
                   !recentCustomSleepDurations.includes(
                     sleepTimerPreference
                       .durationMinutes,
-                  ) && (
+                  ) &&
+                  sleepTimerPreference
+                    .durationMinutes !==
+                    favoriteSleepTimerDuration && (
                     <option
                       value={
                         sleepTimerPreference
@@ -6558,6 +6781,66 @@ function ResumeAudioPlayer({
                     type="button"
                   >
                     Start
+                  </button>
+
+                  <button
+                    aria-label={
+                      favoriteSleepTimerDuration ===
+                      Number(
+                        customSleepMinutes,
+                      )
+                        ? "Remove favorite sleep timer"
+                        : favoriteSleepTimerDuration ===
+                            null
+                          ? "Save favorite sleep timer"
+                          : "Replace favorite sleep timer"
+                    }
+                    aria-pressed={
+                      favoriteSleepTimerDuration ===
+                      Number(
+                        customSleepMinutes,
+                      )
+                    }
+                    className={`h-9 shrink-0 rounded-lg border px-3 text-xs font-semibold transition disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-500 ${
+                      favoriteSleepTimerDuration ===
+                      Number(
+                        customSleepMinutes,
+                      )
+                        ? "border-amber-400/70 bg-amber-400/10 text-amber-200 hover:border-amber-300"
+                        : "border-slate-700 text-slate-300 hover:border-amber-400 hover:text-amber-200"
+                    }`}
+                    disabled={
+                      !isValidSleepTimerDuration(
+                        Number(
+                          customSleepMinutes,
+                        ),
+                      )
+                    }
+                    onClick={
+                      handleFavoriteSleepTimerChange
+                    }
+                    title={
+                      favoriteSleepTimerDuration ===
+                      Number(
+                        customSleepMinutes,
+                      )
+                        ? "Remove this favorite sleep timer"
+                        : favoriteSleepTimerDuration ===
+                            null
+                          ? "Save this as the favorite sleep timer"
+                          : "Replace the current favorite sleep timer"
+                    }
+                    type="button"
+                  >
+                    {favoriteSleepTimerDuration ===
+                    Number(
+                      customSleepMinutes,
+                    )
+                      ? "★ Remove"
+                      : favoriteSleepTimerDuration ===
+                          null
+                        ? "☆ Favorite"
+                        : "☆ Replace"}
                   </button>
                 </div>
               )}
