@@ -4697,6 +4697,11 @@ function ResumeAudioPlayer({
   ] = useState(false);
 
   const [
+    sleepTimerPopoverOpen,
+    setSleepTimerPopoverOpen,
+  ] = useState(false);
+
+  const [
     customSleepMinutes,
     setCustomSleepMinutes,
   ] = useState("30");
@@ -4736,6 +4741,16 @@ function ResumeAudioPlayer({
       null,
     );
 
+  const sleepTimerPopoverRef =
+    useRef<HTMLDivElement | null>(
+      null,
+    );
+
+  const sleepTimerButtonRef =
+    useRef<HTMLButtonElement | null>(
+      null,
+    );
+
   const [
     shortcutsHelpOpen,
     setShortcutsHelpOpen,
@@ -4757,6 +4772,102 @@ function ResumeAudioPlayer({
       }
     };
   }, []);
+
+
+  useEffect(() => {
+    if (!sleepTimerPopoverOpen) {
+      return;
+    }
+
+    function handlePointerDown(
+      event: PointerEvent,
+    ): void {
+      const target =
+        event.target;
+
+      if (!(target instanceof Node)) {
+        return;
+      }
+
+      if (
+        sleepTimerPopoverRef.current?.contains(
+          target,
+        ) ||
+        sleepTimerButtonRef.current?.contains(
+          target,
+        )
+      ) {
+        return;
+      }
+
+      setSleepTimerPopoverOpen(
+        false,
+      );
+
+      setCustomSleepTimerOpen(
+        false,
+      );
+    }
+
+    function handleEscape(
+      event: KeyboardEvent,
+    ): void {
+      if (event.key !== "Escape") {
+        return;
+      }
+
+      setSleepTimerPopoverOpen(
+        false,
+      );
+
+      setCustomSleepTimerOpen(
+        false,
+      );
+
+      sleepTimerButtonRef.current?.focus();
+    }
+
+    document.addEventListener(
+      "pointerdown",
+      handlePointerDown,
+    );
+
+    window.addEventListener(
+      "keydown",
+      handleEscape,
+    );
+
+    return () => {
+      document.removeEventListener(
+        "pointerdown",
+        handlePointerDown,
+      );
+
+      window.removeEventListener(
+        "keydown",
+        handleEscape,
+      );
+    };
+  }, [
+    sleepTimerPopoverOpen,
+  ]);
+
+
+  useEffect(() => {
+    if (isNowPlaying) {
+      return;
+    }
+
+    setSleepTimerPopoverOpen(
+      false,
+    );
+
+    setCustomSleepTimerOpen(
+      false,
+    );
+  }, [
+    isNowPlaying,
+  ]);
 
 
   useEffect(() => {
@@ -6394,6 +6505,374 @@ function ResumeAudioPlayer({
             />
           </div>
 
+          {sleepTimerPopoverOpen && (
+            <div
+              aria-labelledby={`sleep-timer-popover-title-${playerKey}`}
+              className="max-h-[min(60vh,28rem)] overflow-y-auto border-b border-amber-400/20 bg-slate-950/98 px-3 py-3 sm:px-4"
+              id={`sleep-timer-popover-${playerKey}`}
+              ref={sleepTimerPopoverRef}
+              role="dialog"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3
+                    className="text-sm font-bold text-slate-100"
+                    id={`sleep-timer-popover-title-${playerKey}`}
+                  >
+                    🌙 Sleep timer
+                  </h3>
+
+                  <p className="mt-1 text-xs text-slate-400">
+                    {sleepTimerPreference === null
+                      ? "Off"
+                      : sleepTimerPreference.mode ===
+                          "audiobook-end"
+                        ? "Stops at the end of the audiobook"
+                        : sleepTimerPreference.mode ===
+                            "chapter-end"
+                          ? "Stops at the end of this chapter"
+                          : sleepTimerPreference.mode ===
+                              "chapter-end-plus-5"
+                            ? "Stops 5 minutes after this chapter"
+                            : sleepTimerNow > 0
+                              ? `${formatSleepTimerRemaining(
+                                  sleepTimerPreference.expiresAt,
+                                  sleepTimerNow,
+                                )} remaining`
+                              : `${sleepTimerPreference.durationMinutes} minutes`}
+                  </p>
+                </div>
+
+                <button
+                  aria-label="Close sleep timer settings"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-700 text-lg text-slate-300 transition hover:border-cyan-400 hover:text-cyan-200"
+                  onClick={() => {
+                    setSleepTimerPopoverOpen(
+                      false,
+                    );
+
+                    setCustomSleepTimerOpen(
+                      false,
+                    );
+
+                    sleepTimerButtonRef.current?.focus();
+                  }}
+                  title="Close sleep timer settings"
+                  type="button"
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="mt-3 flex flex-wrap items-end gap-2">
+                <div className="min-w-0 flex-1">
+                  <label
+                    className="mb-1 block text-xs font-semibold text-slate-400"
+                    htmlFor={`sleep-timer-${playerKey}`}
+                  >
+                    Timer
+                  </label>
+
+                  <select
+                    aria-label="Sleep timer"
+                    className="h-9 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 text-xs font-semibold text-slate-200 outline-none transition focus:border-cyan-400"
+                    id={`sleep-timer-${playerKey}`}
+                    onChange={(event) =>
+                      handleSleepTimerSelectionChange(
+                        event.target.value,
+                      )
+                    }
+                    title={
+                      sleepTimerPreference === null
+                        ? "Sleep timer off"
+                        : sleepTimerPreference.mode ===
+                            "audiobook-end"
+                          ? "Sleep timer: end of audiobook"
+                          : sleepTimerPreference.mode ===
+                              "chapter-end"
+                            ? "Sleep timer: end of chapter"
+                            : sleepTimerPreference.mode ===
+                                "chapter-end-plus-5"
+                              ? "Sleep timer: 5 minutes after chapter end"
+                              : `Sleep timer: ${
+                                  sleepTimerPreference.durationMinutes
+                                } minutes`
+                    }
+                    value={
+                      sleepTimerPreference === null
+                        ? "off"
+                        : sleepTimerPreference.mode ===
+                            "audiobook-end"
+                          ? "audiobook-end"
+                          : sleepTimerPreference.mode ===
+                              "chapter-end"
+                            ? "chapter-end"
+                            : sleepTimerPreference.mode ===
+                                "chapter-end-plus-5"
+                              ? "chapter-end-plus-5"
+                              : sleepTimerPreference
+                                  .durationMinutes
+                                  .toString()
+                    }
+                  >
+                    <option value="off">
+                      Sleep off
+                    </option>
+
+                    <option value="audiobook-end">
+                      End of audiobook
+                    </option>
+
+                    {format === "M4B" && (
+                      <>
+                        <option
+                          disabled={
+                            chapterEndMs === undefined
+                          }
+                          value="chapter-end"
+                        >
+                          End of chapter
+                        </option>
+
+                        <option
+                          disabled={
+                            chapterEndMs === undefined
+                          }
+                          value="chapter-end-plus-5"
+                        >
+                          5 min after chapter
+                        </option>
+                      </>
+                    )}
+
+                    {favoriteSleepTimerDuration !==
+                      null && (
+                      <option
+                        value={
+                          favoriteSleepTimerDuration
+                        }
+                      >
+                        ★ Favorite:{" "}
+                        {favoriteSleepTimerDuration} min
+                      </option>
+                    )}
+
+                    {SLEEP_TIMER_OPTIONS.filter(
+                      (minutes) =>
+                        minutes !==
+                        favoriteSleepTimerDuration,
+                    ).map(
+                      (minutes) => (
+                        <option
+                          key={minutes}
+                          value={minutes}
+                        >
+                          {minutes} min
+                        </option>
+                      ),
+                    )}
+
+                    {recentCustomSleepDurations
+                      .filter(
+                        (minutes) =>
+                          minutes !==
+                          favoriteSleepTimerDuration,
+                      )
+                      .map(
+                        (minutes) => (
+                          <option
+                            key={`recent-${minutes}`}
+                            value={minutes}
+                          >
+                            Recent: {minutes} min
+                          </option>
+                        ),
+                      )}
+
+                    {sleepTimerPreference?.mode ===
+                      "timed" &&
+                      !isPresetSleepTimerDuration(
+                        sleepTimerPreference
+                          .durationMinutes,
+                      ) &&
+                      !recentCustomSleepDurations.includes(
+                        sleepTimerPreference
+                          .durationMinutes,
+                      ) &&
+                      sleepTimerPreference
+                        .durationMinutes !==
+                        favoriteSleepTimerDuration && (
+                        <option
+                          value={
+                            sleepTimerPreference
+                              .durationMinutes
+                          }
+                        >
+                          {
+                            sleepTimerPreference
+                              .durationMinutes
+                          }{" "}
+                          min custom
+                        </option>
+                      )}
+
+                    <option value="custom">
+                      Custom…
+                    </option>
+                  </select>
+                </div>
+
+                <button
+                  className={`h-9 shrink-0 rounded-lg border px-3 text-xs font-semibold transition ${
+                    sleepTimerPreference === null
+                      ? "border-cyan-500/50 text-cyan-200 hover:border-cyan-300"
+                      : "border-amber-400/60 text-amber-200 hover:border-amber-300"
+                  }`}
+                  onClick={
+                    handleQuickSleepTimerClick
+                  }
+                  type="button"
+                >
+                  {sleepTimerPreference === null
+                    ? "Quick 30 min"
+                    : "Cancel timer"}
+                </button>
+
+                {recentCustomSleepDurations.length >
+                  0 && (
+                  <button
+                    aria-label="Clear recent custom sleep timers"
+                    className="h-9 shrink-0 rounded-lg border border-slate-700 px-3 text-xs font-semibold text-slate-300 transition hover:border-amber-400 hover:text-amber-200"
+                    onClick={
+                      handleClearRecentCustomSleepDurations
+                    }
+                    title="Clear recent custom sleep timers"
+                    type="button"
+                  >
+                    Clear recent
+                  </button>
+                )}
+              </div>
+
+              {customSleepTimerOpen && (
+                <div className="mt-3 flex flex-wrap items-end gap-2 rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+                  <div>
+                    <label
+                      className="mb-1 block text-xs font-semibold text-slate-400"
+                      htmlFor={`custom-sleep-timer-${playerKey}`}
+                    >
+                      Custom minutes
+                    </label>
+
+                    <input
+                      aria-label="Custom sleep timer minutes"
+                      className="h-9 w-24 rounded-lg border border-slate-700 bg-slate-950 px-2 text-xs font-semibold text-slate-200 outline-none transition focus:border-cyan-400"
+                      id={`custom-sleep-timer-${playerKey}`}
+                      inputMode="numeric"
+                      max={
+                        SLEEP_TIMER_MAX_MINUTES
+                      }
+                      min={
+                        SLEEP_TIMER_MIN_MINUTES
+                      }
+                      onChange={(event) =>
+                        setCustomSleepMinutes(
+                          event.target.value,
+                        )
+                      }
+                      placeholder="Minutes"
+                      step="1"
+                      title={`Enter ${SLEEP_TIMER_MIN_MINUTES}–${SLEEP_TIMER_MAX_MINUTES} minutes`}
+                      type="number"
+                      value={
+                        customSleepMinutes
+                      }
+                    />
+                  </div>
+
+                  <button
+                    aria-label="Start custom sleep timer"
+                    className="h-9 shrink-0 rounded-lg border border-cyan-500/50 px-3 text-xs font-semibold text-cyan-200 transition hover:border-cyan-300 disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-500"
+                    disabled={
+                      !isValidSleepTimerDuration(
+                        Number(
+                          customSleepMinutes,
+                        ),
+                      )
+                    }
+                    onClick={
+                      handleCustomSleepTimerStart
+                    }
+                    title={`Start custom sleep timer (${SLEEP_TIMER_MIN_MINUTES}–${SLEEP_TIMER_MAX_MINUTES} minutes)`}
+                    type="button"
+                  >
+                    Start
+                  </button>
+
+                  <button
+                    aria-label={
+                      favoriteSleepTimerDuration ===
+                      Number(
+                        customSleepMinutes,
+                      )
+                        ? "Remove favorite sleep timer"
+                        : favoriteSleepTimerDuration ===
+                            null
+                          ? "Save favorite sleep timer"
+                          : "Replace favorite sleep timer"
+                    }
+                    aria-pressed={
+                      favoriteSleepTimerDuration ===
+                      Number(
+                        customSleepMinutes,
+                      )
+                    }
+                    className={`h-9 shrink-0 rounded-lg border px-3 text-xs font-semibold transition disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-500 ${
+                      favoriteSleepTimerDuration ===
+                      Number(
+                        customSleepMinutes,
+                      )
+                        ? "border-amber-400/70 bg-amber-400/10 text-amber-200 hover:border-amber-300"
+                        : "border-slate-700 text-slate-300 hover:border-amber-400 hover:text-amber-200"
+                    }`}
+                    disabled={
+                      !isValidSleepTimerDuration(
+                        Number(
+                          customSleepMinutes,
+                        ),
+                      )
+                    }
+                    onClick={
+                      handleFavoriteSleepTimerChange
+                    }
+                    title={
+                      favoriteSleepTimerDuration ===
+                      Number(
+                        customSleepMinutes,
+                      )
+                        ? "Remove this favorite sleep timer"
+                        : favoriteSleepTimerDuration ===
+                            null
+                          ? "Save this as the favorite sleep timer"
+                          : "Replace the current favorite sleep timer"
+                    }
+                    type="button"
+                  >
+                    {favoriteSleepTimerDuration ===
+                    Number(
+                      customSleepMinutes,
+                    )
+                      ? "★ Remove"
+                      : favoriteSleepTimerDuration ===
+                          null
+                        ? "☆ Favorite"
+                        : "☆ Replace"}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="grid gap-2 px-3 py-2 sm:px-4 sm:py-3 lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:items-center lg:gap-3">
             <div className="flex w-full items-center justify-center gap-2 lg:col-start-1 lg:row-start-1 lg:w-auto lg:shrink-0 lg:justify-start">
               {onPreviousChapter && (
@@ -6560,290 +7039,6 @@ function ResumeAudioPlayer({
                 )}
               />
 
-              <label
-                className="sr-only"
-                htmlFor={`sleep-timer-${playerKey}`}
-              >
-                Sleep timer
-              </label>
-
-              <select
-                aria-label="Sleep timer"
-                className="h-9 shrink-0 rounded-lg border border-slate-700 bg-slate-950 px-2 text-xs font-semibold text-slate-200 outline-none transition focus:border-cyan-400"
-                id={`sleep-timer-${playerKey}`}
-                onChange={(event) =>
-                  handleSleepTimerSelectionChange(
-                    event.target.value,
-                  )
-                }
-                title={
-                  sleepTimerPreference === null
-                    ? "Sleep timer off"
-                    : sleepTimerPreference.mode ===
-                        "audiobook-end"
-                      ? "Sleep timer: end of audiobook"
-                      : sleepTimerPreference.mode ===
-                          "chapter-end"
-                      ? "Sleep timer: end of chapter"
-                        : sleepTimerPreference.mode ===
-                            "chapter-end-plus-5"
-                          ? "Sleep timer: 5 minutes after chapter end"
-                          : `Sleep timer: ${
-                              sleepTimerPreference.durationMinutes
-                            } minutes`
-                }
-                value={
-                  sleepTimerPreference === null
-                    ? "off"
-                    : sleepTimerPreference.mode ===
-                        "audiobook-end"
-                      ? "audiobook-end"
-                      : sleepTimerPreference.mode ===
-                          "chapter-end"
-                      ? "chapter-end"
-                        : sleepTimerPreference.mode ===
-                            "chapter-end-plus-5"
-                          ? "chapter-end-plus-5"
-                          : sleepTimerPreference
-                              .durationMinutes
-                              .toString()
-                }
-              >
-                <option value="off">
-                  Sleep off
-                </option>
-
-                <option value="audiobook-end">
-                  End of audiobook
-                </option>
-
-                {format === "M4B" && (
-                  <>
-                    <option
-                      disabled={
-                        chapterEndMs === undefined
-                      }
-                      value="chapter-end"
-                    >
-                      End of chapter
-                    </option>
-
-                    <option
-                      disabled={
-                        chapterEndMs === undefined
-                      }
-                      value="chapter-end-plus-5"
-                    >
-                      5 min after chapter
-                    </option>
-                  </>
-                )}
-
-                {favoriteSleepTimerDuration !==
-                  null && (
-                  <option
-                    value={
-                      favoriteSleepTimerDuration
-                    }
-                  >
-                    ★ Favorite:{" "}
-                    {favoriteSleepTimerDuration} min
-                  </option>
-                )}
-
-                {SLEEP_TIMER_OPTIONS.filter(
-                  (minutes) =>
-                    minutes !==
-                    favoriteSleepTimerDuration,
-                ).map(
-                  (minutes) => (
-                    <option
-                      key={minutes}
-                      value={minutes}
-                    >
-                      {minutes} min
-                    </option>
-                  ),
-                )}
-
-                {recentCustomSleepDurations
-                  .filter(
-                    (minutes) =>
-                      minutes !==
-                      favoriteSleepTimerDuration,
-                  )
-                  .map(
-                    (minutes) => (
-                      <option
-                        key={`recent-${minutes}`}
-                        value={minutes}
-                      >
-                        Recent: {minutes} min
-                      </option>
-                    ),
-                  )}
-
-                {sleepTimerPreference?.mode ===
-                  "timed" &&
-                  !isPresetSleepTimerDuration(
-                    sleepTimerPreference
-                      .durationMinutes,
-                  ) &&
-                  !recentCustomSleepDurations.includes(
-                    sleepTimerPreference
-                      .durationMinutes,
-                  ) &&
-                  sleepTimerPreference
-                    .durationMinutes !==
-                    favoriteSleepTimerDuration && (
-                    <option
-                      value={
-                        sleepTimerPreference
-                          .durationMinutes
-                      }
-                    >
-                      {
-                        sleepTimerPreference
-                          .durationMinutes
-                      }{" "}
-                      min custom
-                    </option>
-                  )}
-
-                <option value="custom">
-                  Custom…
-                </option>
-              </select>
-
-              {recentCustomSleepDurations.length >
-                0 && (
-                <button
-                  aria-label="Clear recent custom sleep timers"
-                  className="h-9 shrink-0 rounded-lg border border-slate-700 px-3 text-xs font-semibold text-slate-300 transition hover:border-amber-400 hover:text-amber-200"
-                  onClick={
-                    handleClearRecentCustomSleepDurations
-                  }
-                  title="Clear recent custom sleep timers"
-                  type="button"
-                >
-                  Clear recent
-                </button>
-              )}
-
-              {customSleepTimerOpen && (
-                <div className="flex shrink-0 items-center gap-2">
-                  <label
-                    className="sr-only"
-                    htmlFor={`custom-sleep-timer-${playerKey}`}
-                  >
-                    Custom sleep timer minutes
-                  </label>
-
-                  <input
-                    aria-label="Custom sleep timer minutes"
-                    className="h-9 w-20 rounded-lg border border-slate-700 bg-slate-950 px-2 text-xs font-semibold text-slate-200 outline-none transition focus:border-cyan-400"
-                    id={`custom-sleep-timer-${playerKey}`}
-                    inputMode="numeric"
-                    max={
-                      SLEEP_TIMER_MAX_MINUTES
-                    }
-                    min={
-                      SLEEP_TIMER_MIN_MINUTES
-                    }
-                    onChange={(event) =>
-                      setCustomSleepMinutes(
-                        event.target.value,
-                      )
-                    }
-                    placeholder="Minutes"
-                    step="1"
-                    title={`Enter ${SLEEP_TIMER_MIN_MINUTES}–${SLEEP_TIMER_MAX_MINUTES} minutes`}
-                    type="number"
-                    value={
-                      customSleepMinutes
-                    }
-                  />
-
-                  <button
-                    aria-label="Start custom sleep timer"
-                    className="h-9 shrink-0 rounded-lg border border-cyan-500/50 px-3 text-xs font-semibold text-cyan-200 transition hover:border-cyan-300 disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-500"
-                    disabled={
-                      !isValidSleepTimerDuration(
-                        Number(
-                          customSleepMinutes,
-                        ),
-                      )
-                    }
-                    onClick={
-                      handleCustomSleepTimerStart
-                    }
-                    title={`Start custom sleep timer (${SLEEP_TIMER_MIN_MINUTES}–${SLEEP_TIMER_MAX_MINUTES} minutes)`}
-                    type="button"
-                  >
-                    Start
-                  </button>
-
-                  <button
-                    aria-label={
-                      favoriteSleepTimerDuration ===
-                      Number(
-                        customSleepMinutes,
-                      )
-                        ? "Remove favorite sleep timer"
-                        : favoriteSleepTimerDuration ===
-                            null
-                          ? "Save favorite sleep timer"
-                          : "Replace favorite sleep timer"
-                    }
-                    aria-pressed={
-                      favoriteSleepTimerDuration ===
-                      Number(
-                        customSleepMinutes,
-                      )
-                    }
-                    className={`h-9 shrink-0 rounded-lg border px-3 text-xs font-semibold transition disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-500 ${
-                      favoriteSleepTimerDuration ===
-                      Number(
-                        customSleepMinutes,
-                      )
-                        ? "border-amber-400/70 bg-amber-400/10 text-amber-200 hover:border-amber-300"
-                        : "border-slate-700 text-slate-300 hover:border-amber-400 hover:text-amber-200"
-                    }`}
-                    disabled={
-                      !isValidSleepTimerDuration(
-                        Number(
-                          customSleepMinutes,
-                        ),
-                      )
-                    }
-                    onClick={
-                      handleFavoriteSleepTimerChange
-                    }
-                    title={
-                      favoriteSleepTimerDuration ===
-                      Number(
-                        customSleepMinutes,
-                      )
-                        ? "Remove this favorite sleep timer"
-                        : favoriteSleepTimerDuration ===
-                            null
-                          ? "Save this as the favorite sleep timer"
-                          : "Replace the current favorite sleep timer"
-                    }
-                    type="button"
-                  >
-                    {favoriteSleepTimerDuration ===
-                    Number(
-                      customSleepMinutes,
-                    )
-                      ? "★ Remove"
-                      : favoriteSleepTimerDuration ===
-                          null
-                        ? "☆ Favorite"
-                        : "☆ Replace"}
-                  </button>
-                </div>
-              )}
             </div>
 
             <div className="min-w-0 w-full lg:col-start-2 lg:row-start-1">
@@ -6917,27 +7112,38 @@ function ResumeAudioPlayer({
 
             <div className="flex w-full shrink-0 items-center justify-between gap-2 lg:col-start-3 lg:row-start-1 lg:w-auto lg:justify-start">
               <button
-                aria-label={
-                  sleepTimerPreference === null
-                    ? "Start 30-minute sleep timer"
-                    : "Cancel sleep timer"
+                aria-controls={`sleep-timer-popover-${playerKey}`}
+                aria-expanded={
+                  sleepTimerPopoverOpen
                 }
+                aria-haspopup="dialog"
+                aria-label="Sleep timer settings"
                 aria-pressed={
                   sleepTimerPreference !== null
                 }
                 className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border text-sm transition ${
                   sleepTimerPreference === null
-                    ? "border-slate-700 text-slate-200 hover:border-cyan-400 hover:text-cyan-200"
+                    ? sleepTimerPopoverOpen
+                      ? "border-cyan-400 bg-cyan-400/10 text-cyan-200"
+                      : "border-slate-700 text-slate-200 hover:border-cyan-400 hover:text-cyan-200"
                     : "border-amber-400/70 bg-amber-400/10 text-amber-200 hover:border-amber-300"
                 }`}
-                onClick={
-                  handleQuickSleepTimerClick
-                }
-                title={
-                  sleepTimerPreference === null
-                    ? "Start 30-minute sleep timer"
-                    : "Cancel sleep timer"
-                }
+                onClick={() => {
+                  setSleepTimerPopoverOpen(
+                    (current) =>
+                      !current,
+                  );
+
+                  if (
+                    sleepTimerPopoverOpen
+                  ) {
+                    setCustomSleepTimerOpen(
+                      false,
+                    );
+                  }
+                }}
+                ref={sleepTimerButtonRef}
+                title="Sleep timer settings"
                 type="button"
               >
                 🌙
