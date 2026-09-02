@@ -3644,6 +3644,10 @@ const PLAYBACK_ACTIVITY_STORAGE_PREFIX =
   "openbook-audiobook-last-played-v1";
 const PLAYBACK_RATE_STORAGE_KEY =
   "openbook-audiobook-playback-rate-v1";
+const NOW_PLAYING_COLLAPSED_STORAGE_KEY =
+  "openbook-audiobook-now-playing-collapsed-v1";
+const NOW_PLAYING_COLLAPSED_EVENT =
+  "openbook-audiobook-now-playing-collapsed-changed";
 const PLAYBACK_LIBRARY_EVENT =
   "openbook-playback-library-changed";
 const PLAYBACK_RATE_EVENT =
@@ -3659,6 +3663,57 @@ const PLAYBACK_RATE_OPTIONS = [
 const PLAYBACK_RESUME_MIN_SECONDS = 10;
 const PLAYBACK_FINISH_MARGIN_SECONDS = 15;
 const PLAYBACK_SAVE_INTERVAL_SECONDS = 5;
+
+
+function readStoredNowPlayingCollapsed(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  try {
+    return (
+      window.localStorage.getItem(
+        NOW_PLAYING_COLLAPSED_STORAGE_KEY,
+      ) === "true"
+    );
+  } catch {
+    return false;
+  }
+}
+
+
+function storeNowPlayingCollapsed(
+  collapsed: boolean,
+): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    if (collapsed) {
+      window.localStorage.setItem(
+        NOW_PLAYING_COLLAPSED_STORAGE_KEY,
+        "true",
+      );
+    } else {
+      window.localStorage.removeItem(
+        NOW_PLAYING_COLLAPSED_STORAGE_KEY,
+      );
+    }
+  } catch {
+  }
+
+  window.dispatchEvent(
+    new CustomEvent(
+      NOW_PLAYING_COLLAPSED_EVENT,
+      {
+        detail: {
+          collapsed,
+        },
+      },
+    ),
+  );
+}
 
 
 function normalizePlaybackRate(
@@ -4702,6 +4757,11 @@ function ResumeAudioPlayer({
   ] = useState(false);
 
   const [
+    nowPlayingCollapsed,
+    setNowPlayingCollapsed,
+  ] = useState(false);
+
+  const [
     customSleepMinutes,
     setCustomSleepMinutes,
   ] = useState("30");
@@ -4758,6 +4818,58 @@ function ResumeAudioPlayer({
 
   const playerKey =
     `${jobId}:${format.toLowerCase()}`;
+
+
+  useEffect(() => {
+    setNowPlayingCollapsed(
+      readStoredNowPlayingCollapsed(),
+    );
+
+    function handleNowPlayingCollapsed(
+      event: Event,
+    ): void {
+      const customEvent =
+        event as CustomEvent<{
+          collapsed: boolean;
+        }>;
+
+      setNowPlayingCollapsed(
+        Boolean(
+          customEvent.detail
+            ?.collapsed,
+        ),
+      );
+    }
+
+    window.addEventListener(
+      NOW_PLAYING_COLLAPSED_EVENT,
+      handleNowPlayingCollapsed,
+    );
+
+    return () => {
+      window.removeEventListener(
+        NOW_PLAYING_COLLAPSED_EVENT,
+        handleNowPlayingCollapsed,
+      );
+    };
+  }, []);
+
+
+  useEffect(() => {
+    if (!nowPlayingCollapsed) {
+      return;
+    }
+
+    setSleepTimerPopoverOpen(
+      false,
+    );
+
+    setCustomSleepTimerOpen(
+      false,
+    );
+  }, [
+    nowPlayingCollapsed,
+  ]);
 
 
   useEffect(() => {
@@ -6368,6 +6480,20 @@ function ResumeAudioPlayer({
   }
 
 
+  function handleNowPlayingCollapsedToggle(): void {
+    const nextCollapsed =
+      !nowPlayingCollapsed;
+
+    setNowPlayingCollapsed(
+      nextCollapsed,
+    );
+
+    storeNowPlayingCollapsed(
+      nextCollapsed,
+    );
+  }
+
+
   function showFullPlayer(): void {
     playerContainerRef.current?.scrollIntoView(
       {
@@ -6873,7 +6999,105 @@ function ResumeAudioPlayer({
             </div>
           )}
 
-          <div className="grid gap-2 px-3 py-2 sm:px-4 sm:py-3 lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:items-center lg:gap-3">
+          {nowPlayingCollapsed ? (
+            <div className="flex min-w-0 items-center gap-2 px-3 py-2 sm:px-4">
+              <button
+                aria-label={
+                  isPlaying
+                    ? "Pause audiobook"
+                    : "Play audiobook"
+                }
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-cyan-400 text-sm font-bold text-slate-950 transition hover:bg-cyan-300"
+                onClick={
+                  togglePlayback
+                }
+                type="button"
+              >
+                {isPlaying ? "Ⅱ" : "▶"}
+              </button>
+
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <span className="shrink-0 rounded-full bg-cyan-500/15 px-2 py-0.5 text-[10px] font-bold text-cyan-300">
+                  {format}
+                </span>
+
+                <p
+                  className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-100"
+                  title={bookTitle}
+                >
+                  {bookTitle}
+                </p>
+              </div>
+
+              <span
+                className="shrink-0 text-xs font-medium text-slate-400"
+                title="Current playback position"
+              >
+                {formatPlaybackPosition(
+                  currentTime,
+                )}
+              </span>
+
+              <button
+                aria-controls={`sleep-timer-popover-${playerKey}`}
+                aria-expanded={
+                  sleepTimerPopoverOpen
+                }
+                aria-haspopup="dialog"
+                aria-label={
+                  sleepTimerPreference === null
+                    ? "Sleep timer settings"
+                    : "Sleep timer active; open settings"
+                }
+                aria-pressed={
+                  sleepTimerPreference !== null
+                }
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border text-sm transition ${
+                  sleepTimerPreference === null
+                    ? sleepTimerPopoverOpen
+                      ? "border-cyan-400 bg-cyan-400/10 text-cyan-200"
+                      : "border-slate-700 text-slate-200 hover:border-cyan-400 hover:text-cyan-200"
+                    : "border-amber-400/70 bg-amber-400/10 text-amber-200 hover:border-amber-300"
+                }`}
+                onClick={() => {
+                  setSleepTimerPopoverOpen(
+                    (current) =>
+                      !current,
+                  );
+
+                  if (
+                    sleepTimerPopoverOpen
+                  ) {
+                    setCustomSleepTimerOpen(
+                      false,
+                    );
+                  }
+                }}
+                ref={sleepTimerButtonRef}
+                title={
+                  sleepTimerPreference === null
+                    ? "Sleep timer settings"
+                    : "Sleep timer active"
+                }
+                type="button"
+              >
+                🌙
+              </button>
+
+              <button
+                aria-label="Expand Now Playing"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-700 text-sm font-bold text-slate-200 transition hover:border-cyan-400 hover:text-cyan-200"
+                onClick={
+                  handleNowPlayingCollapsedToggle
+                }
+                title="Expand Now Playing"
+                type="button"
+              >
+                ▴
+              </button>
+            </div>
+          ) : (
+            <div className="grid gap-2 px-3 py-2 sm:px-4 sm:py-3 lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:items-center lg:gap-3">
             <div className="flex w-full items-center justify-center gap-2 lg:col-start-1 lg:row-start-1 lg:w-auto lg:shrink-0 lg:justify-start">
               {onPreviousChapter && (
                 <button
@@ -7177,8 +7401,21 @@ function ResumeAudioPlayer({
               >
                 Go to player
               </button>
+
+              <button
+                aria-label="Collapse Now Playing"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-700 text-sm font-bold text-slate-200 transition hover:border-cyan-400 hover:text-cyan-200"
+                onClick={
+                  handleNowPlayingCollapsedToggle
+                }
+                title="Collapse Now Playing"
+                type="button"
+              >
+                ▾
+              </button>
             </div>
-          </div>
+            </div>
+          )}
         </div>
       )}
 
