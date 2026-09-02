@@ -3648,6 +3648,16 @@ const NOW_PLAYING_COLLAPSED_STORAGE_KEY =
   "openbook-audiobook-now-playing-collapsed-v1";
 const NOW_PLAYING_COLLAPSED_EVENT =
   "openbook-audiobook-now-playing-collapsed-changed";
+const AUDIOBOOK_BOOKMARK_STORAGE_PREFIX =
+  "openbook-audiobook-bookmarks-v1";
+const AUDIOBOOK_BOOKMARK_EVENT =
+  "openbook-audiobook-bookmarks-changed";
+const AUDIOBOOK_BOOKMARK_LIMIT =
+  50;
+const AUDIOBOOK_BOOKMARK_NAME_MAX_LENGTH =
+  120;
+const AUDIOBOOK_BOOKMARK_CHAPTER_MAX_LENGTH =
+  200;
 const PLAYBACK_LIBRARY_EVENT =
   "openbook-playback-library-changed";
 const PLAYBACK_RATE_EVENT =
@@ -3663,6 +3673,267 @@ const PLAYBACK_RATE_OPTIONS = [
 const PLAYBACK_RESUME_MIN_SECONDS = 10;
 const PLAYBACK_FINISH_MARGIN_SECONDS = 15;
 const PLAYBACK_SAVE_INTERVAL_SECONDS = 5;
+
+
+interface AudiobookBookmark {
+  id: string;
+  name: string;
+  positionSeconds: number;
+  createdAt: number;
+  chapterTitle?: string;
+}
+
+
+interface AudiobookBookmarkEventDetail {
+  jobId: number;
+  bookmarks: AudiobookBookmark[];
+}
+
+
+function normalizeAudiobookBookmarkName(
+  value: string,
+): string {
+  return value
+    .trim()
+    .slice(
+      0,
+      AUDIOBOOK_BOOKMARK_NAME_MAX_LENGTH,
+    );
+}
+
+
+function normalizeAudiobookBookmarks(
+  value: unknown,
+): AudiobookBookmark[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const bookmarks:
+    AudiobookBookmark[] = [];
+
+  for (const candidate of value) {
+    if (
+      typeof candidate !== "object" ||
+      candidate === null
+    ) {
+      continue;
+    }
+
+    const record =
+      candidate as Record<
+        string,
+        unknown
+      >;
+
+    if (
+      typeof record.id !== "string" ||
+      record.id.trim() === "" ||
+      typeof record.name !== "string"
+    ) {
+      continue;
+    }
+
+    const name =
+      normalizeAudiobookBookmarkName(
+        record.name,
+      );
+
+    const positionSeconds =
+      Number(
+        record.positionSeconds,
+      );
+
+    const createdAt =
+      Number(
+        record.createdAt,
+      );
+
+    if (
+      name === "" ||
+      !Number.isFinite(
+        positionSeconds,
+      ) ||
+      positionSeconds < 0 ||
+      !Number.isFinite(
+        createdAt,
+      ) ||
+      createdAt < 0
+    ) {
+      continue;
+    }
+
+    let storedChapterTitle:
+      string | undefined;
+
+    if (
+      typeof record.chapterTitle ===
+        "string" &&
+      record.chapterTitle.trim() !== ""
+    ) {
+      storedChapterTitle =
+        record.chapterTitle
+          .trim()
+          .slice(
+            0,
+            AUDIOBOOK_BOOKMARK_CHAPTER_MAX_LENGTH,
+          );
+    }
+
+    bookmarks.push(
+      {
+        id: record.id.trim(),
+        name,
+        positionSeconds,
+        createdAt,
+        chapterTitle:
+          storedChapterTitle,
+      },
+    );
+  }
+
+  return bookmarks
+    .sort(
+      (first, second) =>
+        first.positionSeconds -
+          second.positionSeconds ||
+        first.createdAt -
+          second.createdAt,
+    )
+    .slice(
+      0,
+      AUDIOBOOK_BOOKMARK_LIMIT,
+    );
+}
+
+
+function getAudiobookBookmarkStorageKey(
+  jobId: number,
+): string {
+  return `${AUDIOBOOK_BOOKMARK_STORAGE_PREFIX}:${jobId}`;
+}
+
+
+function readStoredAudiobookBookmarks(
+  jobId: number,
+): AudiobookBookmark[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  try {
+    const storedValue =
+      window.localStorage.getItem(
+        getAudiobookBookmarkStorageKey(
+          jobId,
+        ),
+      );
+
+    if (storedValue === null) {
+      return [];
+    }
+
+    return normalizeAudiobookBookmarks(
+      JSON.parse(
+        storedValue,
+      ),
+    );
+  } catch {
+    return [];
+  }
+}
+
+
+function storeAudiobookBookmarks(
+  jobId: number,
+  bookmarks: AudiobookBookmark[],
+): AudiobookBookmark[] {
+  const normalizedBookmarks =
+    normalizeAudiobookBookmarks(
+      bookmarks,
+    );
+
+  if (typeof window === "undefined") {
+    return normalizedBookmarks;
+  }
+
+  try {
+    if (
+      normalizedBookmarks.length === 0
+    ) {
+      window.localStorage.removeItem(
+        getAudiobookBookmarkStorageKey(
+          jobId,
+        ),
+      );
+    } else {
+      window.localStorage.setItem(
+        getAudiobookBookmarkStorageKey(
+          jobId,
+        ),
+        JSON.stringify(
+          normalizedBookmarks,
+        ),
+      );
+    }
+  } catch {
+  }
+
+  window.dispatchEvent(
+    new CustomEvent<AudiobookBookmarkEventDetail>(
+      AUDIOBOOK_BOOKMARK_EVENT,
+      {
+        detail: {
+          jobId,
+          bookmarks:
+            normalizedBookmarks,
+        },
+      },
+    ),
+  );
+
+  return normalizedBookmarks;
+}
+
+
+function createAudiobookBookmarkId(): string {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID ===
+      "function"
+  ) {
+    return crypto.randomUUID();
+  }
+
+  return [
+    Date.now().toString(36),
+    Math.random()
+      .toString(36)
+      .slice(2),
+  ].join("-");
+}
+
+
+function getDefaultAudiobookBookmarkName(
+  positionSeconds: number,
+  chapterTitle?: string,
+): string {
+  const position =
+    formatPlaybackPosition(
+      positionSeconds,
+    );
+
+  if (
+    chapterTitle !== undefined &&
+    chapterTitle.trim() !== ""
+  ) {
+    return normalizeAudiobookBookmarkName(
+      `${chapterTitle.trim()} · ${position}`,
+    );
+  }
+
+  return `Bookmark at ${position}`;
+}
 
 
 function readStoredNowPlayingCollapsed(): boolean {
@@ -4762,6 +5033,35 @@ function ResumeAudioPlayer({
   ] = useState(false);
 
   const [
+    bookmarkPopoverOpen,
+    setBookmarkPopoverOpen,
+  ] = useState(false);
+
+  const [
+    bookmarks,
+    setBookmarks,
+  ] = useState<AudiobookBookmark[]>(
+    [],
+  );
+
+  const [
+    newBookmarkName,
+    setNewBookmarkName,
+  ] = useState("");
+
+  const [
+    editingBookmarkId,
+    setEditingBookmarkId,
+  ] = useState<string | null>(
+    null,
+  );
+
+  const [
+    editingBookmarkName,
+    setEditingBookmarkName,
+  ] = useState("");
+
+  const [
     customSleepMinutes,
     setCustomSleepMinutes,
   ] = useState("30");
@@ -4811,6 +5111,16 @@ function ResumeAudioPlayer({
       null,
     );
 
+  const bookmarkPopoverRef =
+    useRef<HTMLDivElement | null>(
+      null,
+    );
+
+  const bookmarkButtonRef =
+    useRef<HTMLButtonElement | null>(
+      null,
+    );
+
   const [
     shortcutsHelpOpen,
     setShortcutsHelpOpen,
@@ -4856,6 +5166,66 @@ function ResumeAudioPlayer({
 
 
   useEffect(() => {
+    setBookmarks(
+      readStoredAudiobookBookmarks(
+        jobId,
+      ),
+    );
+
+    setBookmarkPopoverOpen(
+      false,
+    );
+
+    setNewBookmarkName(
+      "",
+    );
+
+    setEditingBookmarkId(
+      null,
+    );
+
+    setEditingBookmarkName(
+      "",
+    );
+
+    function handleAudiobookBookmarks(
+      event: Event,
+    ): void {
+      const customEvent =
+        event as CustomEvent<AudiobookBookmarkEventDetail>;
+
+      if (
+        customEvent.detail?.jobId !==
+        jobId
+      ) {
+        return;
+      }
+
+      setBookmarks(
+        normalizeAudiobookBookmarks(
+          customEvent.detail
+            .bookmarks,
+        ),
+      );
+    }
+
+    window.addEventListener(
+      AUDIOBOOK_BOOKMARK_EVENT,
+      handleAudiobookBookmarks,
+    );
+
+    return () => {
+      window.removeEventListener(
+        AUDIOBOOK_BOOKMARK_EVENT,
+        handleAudiobookBookmarks,
+      );
+    };
+  }, [
+    jobId,
+  ]);
+
+
+  useEffect(() => {
     if (!nowPlayingCollapsed) {
       return;
     }
@@ -4884,6 +5254,93 @@ function ResumeAudioPlayer({
       }
     };
   }, []);
+
+
+  useEffect(() => {
+    if (!bookmarkPopoverOpen) {
+      return;
+    }
+
+    function handleBookmarkPointerDown(
+      event: PointerEvent,
+    ): void {
+      const target =
+        event.target;
+
+      if (!(target instanceof Node)) {
+        return;
+      }
+
+      if (
+        bookmarkPopoverRef.current?.contains(
+          target,
+        ) ||
+        bookmarkButtonRef.current?.contains(
+          target,
+        )
+      ) {
+        return;
+      }
+
+      setBookmarkPopoverOpen(
+        false,
+      );
+
+      setEditingBookmarkId(
+        null,
+      );
+
+      setEditingBookmarkName(
+        "",
+      );
+    }
+
+    function handleBookmarkEscape(
+      event: KeyboardEvent,
+    ): void {
+      if (event.key !== "Escape") {
+        return;
+      }
+
+      setBookmarkPopoverOpen(
+        false,
+      );
+
+      setEditingBookmarkId(
+        null,
+      );
+
+      setEditingBookmarkName(
+        "",
+      );
+
+      bookmarkButtonRef.current?.focus();
+    }
+
+    document.addEventListener(
+      "pointerdown",
+      handleBookmarkPointerDown,
+    );
+
+    window.addEventListener(
+      "keydown",
+      handleBookmarkEscape,
+    );
+
+    return () => {
+      document.removeEventListener(
+        "pointerdown",
+        handleBookmarkPointerDown,
+      );
+
+      window.removeEventListener(
+        "keydown",
+        handleBookmarkEscape,
+      );
+    };
+  }, [
+    bookmarkPopoverOpen,
+  ]);
 
 
   useEffect(() => {
@@ -4976,6 +5433,18 @@ function ResumeAudioPlayer({
 
     setCustomSleepTimerOpen(
       false,
+    );
+
+    setBookmarkPopoverOpen(
+      false,
+    );
+
+    setEditingBookmarkId(
+      null,
+    );
+
+    setEditingBookmarkName(
+      "",
     );
   }, [
     isNowPlaying,
@@ -6471,6 +6940,248 @@ function ResumeAudioPlayer({
   }
 
 
+  function commitAudiobookBookmarks(
+    nextBookmarks: AudiobookBookmark[],
+  ): void {
+    const storedBookmarks =
+      storeAudiobookBookmarks(
+        jobId,
+        nextBookmarks,
+      );
+
+    setBookmarks(
+      storedBookmarks,
+    );
+  }
+
+
+  function handleBookmarkPopoverToggle(): void {
+    const nextOpen =
+      !bookmarkPopoverOpen;
+
+    setBookmarkPopoverOpen(
+      nextOpen,
+    );
+
+    if (nextOpen) {
+      setSleepTimerPopoverOpen(
+        false,
+      );
+
+      setCustomSleepTimerOpen(
+        false,
+      );
+
+      setEditingBookmarkId(
+        null,
+      );
+
+      setEditingBookmarkName(
+        "",
+      );
+    }
+  }
+
+
+  function handleAddBookmark(): void {
+    if (
+      bookmarks.length >=
+      AUDIOBOOK_BOOKMARK_LIMIT
+    ) {
+      return;
+    }
+
+    const audio =
+      playerRef.current;
+
+    const positionSeconds =
+      audio?.currentTime ??
+      currentTime;
+
+    if (
+      !Number.isFinite(
+        positionSeconds,
+      ) ||
+      positionSeconds < 0
+    ) {
+      return;
+    }
+
+    const normalizedName =
+      normalizeAudiobookBookmarkName(
+        newBookmarkName,
+      );
+
+    const bookmark:
+      AudiobookBookmark = {
+        id: createAudiobookBookmarkId(),
+        name:
+          normalizedName !== ""
+            ? normalizedName
+            : getDefaultAudiobookBookmarkName(
+                positionSeconds,
+                chapterTitle,
+              ),
+        positionSeconds,
+        createdAt:
+          Date.now(),
+        chapterTitle:
+          chapterTitle
+            ?.trim()
+            .slice(
+              0,
+              AUDIOBOOK_BOOKMARK_CHAPTER_MAX_LENGTH,
+            ) ||
+          undefined,
+      };
+
+    commitAudiobookBookmarks(
+      [
+        ...bookmarks,
+        bookmark,
+      ],
+    );
+
+    setNewBookmarkName(
+      "",
+    );
+  }
+
+
+  function handleJumpToBookmark(
+    bookmark: AudiobookBookmark,
+  ): void {
+    const audio =
+      playerRef.current;
+
+    if (audio === null) {
+      return;
+    }
+
+    const maximumTime =
+      Number.isFinite(
+        audio.duration,
+      ) &&
+      audio.duration > 0
+        ? audio.duration
+        : Number.POSITIVE_INFINITY;
+
+    const nextTime =
+      Math.min(
+        maximumTime,
+        Math.max(
+          0,
+          bookmark.positionSeconds,
+        ),
+      );
+
+    audio.currentTime =
+      nextTime;
+
+    setCurrentTime(
+      nextTime,
+    );
+
+    handleImmediateSave(
+      audio,
+    );
+  }
+
+
+  function handleStartBookmarkRename(
+    bookmark: AudiobookBookmark,
+  ): void {
+    setEditingBookmarkId(
+      bookmark.id,
+    );
+
+    setEditingBookmarkName(
+      bookmark.name,
+    );
+  }
+
+
+  function handleSaveBookmarkRename(
+    bookmarkId: string,
+  ): void {
+    const bookmark =
+      bookmarks.find(
+        (candidate) =>
+          candidate.id ===
+          bookmarkId,
+      );
+
+    if (bookmark === undefined) {
+      return;
+    }
+
+    const normalizedName =
+      normalizeAudiobookBookmarkName(
+        editingBookmarkName,
+      );
+
+    const nextName =
+      normalizedName !== ""
+        ? normalizedName
+        : getDefaultAudiobookBookmarkName(
+            bookmark.positionSeconds,
+            bookmark.chapterTitle,
+          );
+
+    commitAudiobookBookmarks(
+      bookmarks.map(
+        (candidate) =>
+          candidate.id ===
+          bookmarkId
+            ? {
+                ...candidate,
+                name: nextName,
+              }
+            : candidate,
+      ),
+    );
+
+    setEditingBookmarkId(
+      null,
+    );
+
+    setEditingBookmarkName(
+      "",
+    );
+  }
+
+
+  function handleCancelBookmarkRename(): void {
+    setEditingBookmarkId(
+      null,
+    );
+
+    setEditingBookmarkName(
+      "",
+    );
+  }
+
+
+  function handleDeleteBookmark(
+    bookmarkId: string,
+  ): void {
+    commitAudiobookBookmarks(
+      bookmarks.filter(
+        (bookmark) =>
+          bookmark.id !==
+          bookmarkId,
+      ),
+    );
+
+    if (
+      editingBookmarkId ===
+      bookmarkId
+    ) {
+      handleCancelBookmarkRename();
+    }
+  }
+
+
   function handleQuickSleepTimerClick(): void {
     handleSleepTimerChange(
       sleepTimerPreference === null
@@ -6630,6 +7341,278 @@ function ResumeAudioPlayer({
               }}
             />
           </div>
+
+          {bookmarkPopoverOpen && (
+            <div
+              aria-labelledby={`audiobook-bookmarks-title-${playerKey}`}
+              className="max-h-[min(65vh,32rem)] overflow-y-auto border-b border-cyan-400/20 bg-slate-950/98 px-3 py-3 sm:px-4"
+              id={`audiobook-bookmarks-${playerKey}`}
+              ref={bookmarkPopoverRef}
+              role="dialog"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3
+                    className="text-sm font-bold text-slate-100"
+                    id={`audiobook-bookmarks-title-${playerKey}`}
+                  >
+                    🔖 Bookmarks
+                  </h3>
+
+                  <p className="mt-1 text-xs text-slate-400">
+                    Current position:{" "}
+                    {formatPlaybackPosition(
+                      currentTime,
+                    )}
+                    {chapterTitle
+                      ? ` · ${chapterTitle}`
+                      : ""}
+                  </p>
+                </div>
+
+                <button
+                  aria-label="Close audiobook bookmarks"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-700 text-lg text-slate-300 transition hover:border-cyan-400 hover:text-cyan-200"
+                  onClick={() => {
+                    setBookmarkPopoverOpen(
+                      false,
+                    );
+
+                    handleCancelBookmarkRename();
+
+                    bookmarkButtonRef.current?.focus();
+                  }}
+                  title="Close audiobook bookmarks"
+                  type="button"
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+                <label
+                  className="block text-xs font-semibold text-slate-400"
+                  htmlFor={`new-audiobook-bookmark-${playerKey}`}
+                >
+                  Save current position
+                </label>
+
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <input
+                    aria-label="New bookmark name"
+                    autoFocus
+                    className="h-9 min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-slate-200 outline-none transition focus:border-cyan-400"
+                    id={`new-audiobook-bookmark-${playerKey}`}
+                    maxLength={
+                      AUDIOBOOK_BOOKMARK_NAME_MAX_LENGTH
+                    }
+                    onChange={(event) =>
+                      setNewBookmarkName(
+                        event.target.value,
+                      )
+                    }
+                    onKeyDown={(event) => {
+                      if (
+                        event.key ===
+                          "Enter" &&
+                        !event.nativeEvent
+                          .isComposing
+                      ) {
+                        event.preventDefault();
+                        handleAddBookmark();
+                      }
+                    }}
+                    placeholder={`Bookmark at ${formatPlaybackPosition(
+                      currentTime,
+                    )}`}
+                    type="text"
+                    value={
+                      newBookmarkName
+                    }
+                  />
+
+                  <button
+                    aria-label="Save audiobook bookmark"
+                    className="h-9 shrink-0 rounded-lg border border-cyan-500/50 px-3 text-xs font-semibold text-cyan-200 transition hover:border-cyan-300 disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-500"
+                    disabled={
+                      bookmarks.length >=
+                      AUDIOBOOK_BOOKMARK_LIMIT
+                    }
+                    onClick={
+                      handleAddBookmark
+                    }
+                    title="Save current audiobook position"
+                    type="button"
+                  >
+                    Add bookmark
+                  </button>
+                </div>
+
+                <p className="mt-2 text-xs text-slate-500">
+                  {bookmarks.length} /{" "}
+                  {AUDIOBOOK_BOOKMARK_LIMIT} saved
+                  {bookmarks.length >=
+                  AUDIOBOOK_BOOKMARK_LIMIT
+                    ? " · Delete one to add another."
+                    : ""}
+                </p>
+              </div>
+
+              <div className="mt-3 space-y-2">
+                {bookmarks.length === 0 ? (
+                  <p className="rounded-xl border border-dashed border-slate-700 px-3 py-4 text-center text-sm text-slate-500">
+                    No bookmarks saved for this audiobook yet.
+                  </p>
+                ) : (
+                  bookmarks.map(
+                    (bookmark) => (
+                      <div
+                        className="rounded-xl border border-slate-800 bg-slate-900/60 p-3"
+                        key={
+                          bookmark.id
+                        }
+                      >
+                        {editingBookmarkId ===
+                        bookmark.id ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <input
+                              aria-label={`Rename bookmark ${bookmark.name}`}
+                              autoFocus
+                              className="h-9 min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-slate-200 outline-none transition focus:border-cyan-400"
+                              maxLength={
+                                AUDIOBOOK_BOOKMARK_NAME_MAX_LENGTH
+                              }
+                              onChange={(event) =>
+                                setEditingBookmarkName(
+                                  event.target.value,
+                                )
+                              }
+                              onKeyDown={(event) => {
+                                if (
+                                  event.key ===
+                                    "Enter" &&
+                                  !event.nativeEvent
+                                    .isComposing
+                                ) {
+                                  event.preventDefault();
+
+                                  handleSaveBookmarkRename(
+                                    bookmark.id,
+                                  );
+                                }
+
+                                if (
+                                  event.key ===
+                                  "Escape"
+                                ) {
+                                  event.stopPropagation();
+
+                                  handleCancelBookmarkRename();
+                                }
+                              }}
+                              type="text"
+                              value={
+                                editingBookmarkName
+                              }
+                            />
+
+                            <button
+                              className="h-9 rounded-lg border border-cyan-500/50 px-3 text-xs font-semibold text-cyan-200 transition hover:border-cyan-300"
+                              onClick={() =>
+                                handleSaveBookmarkRename(
+                                  bookmark.id,
+                                )
+                              }
+                              type="button"
+                            >
+                              Save
+                            </button>
+
+                            <button
+                              className="h-9 rounded-lg border border-slate-700 px-3 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
+                              onClick={
+                                handleCancelBookmarkRename
+                              }
+                              type="button"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                            <button
+                              className="min-w-0 flex-1 text-left"
+                              onClick={() =>
+                                handleJumpToBookmark(
+                                  bookmark,
+                                )
+                              }
+                              title={`Jump to ${bookmark.name}`}
+                              type="button"
+                            >
+                              <span className="block truncate text-sm font-semibold text-slate-100">
+                                {
+                                  bookmark.name
+                                }
+                              </span>
+
+                              <span className="mt-1 block text-xs text-cyan-300">
+                                {formatPlaybackPosition(
+                                  bookmark.positionSeconds,
+                                )}
+                              </span>
+
+                              {bookmark.chapterTitle && (
+                                <span
+                                  className="mt-1 block truncate text-xs text-slate-400"
+                                  title={
+                                    bookmark.chapterTitle
+                                  }
+                                >
+                                  Chapter:{" "}
+                                  {
+                                    bookmark.chapterTitle
+                                  }
+                                </span>
+                              )}
+                            </button>
+
+                            <div className="flex shrink-0 gap-2">
+                              <button
+                                aria-label={`Rename bookmark ${bookmark.name}`}
+                                className="h-8 rounded-lg border border-slate-700 px-3 text-xs font-semibold text-slate-300 transition hover:border-cyan-400 hover:text-cyan-200"
+                                onClick={() =>
+                                  handleStartBookmarkRename(
+                                    bookmark,
+                                  )
+                                }
+                                type="button"
+                              >
+                                Rename
+                              </button>
+
+                              <button
+                                aria-label={`Delete bookmark ${bookmark.name}`}
+                                className="h-8 rounded-lg border border-slate-700 px-3 text-xs font-semibold text-slate-400 transition hover:border-rose-400 hover:text-rose-200"
+                                onClick={() =>
+                                  handleDeleteBookmark(
+                                    bookmark.id,
+                                  )
+                                }
+                                type="button"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ),
+                  )
+                )}
+              </div>
+            </div>
+          )}
 
           {sleepTimerPopoverOpen && (
             <div
@@ -7039,6 +8022,38 @@ function ResumeAudioPlayer({
               </span>
 
               <button
+                aria-controls={`audiobook-bookmarks-${playerKey}`}
+                aria-expanded={
+                  bookmarkPopoverOpen
+                }
+                aria-haspopup="dialog"
+                aria-label="Audiobook bookmarks"
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border text-sm transition ${
+                  bookmarkPopoverOpen
+                    ? "border-cyan-400 bg-cyan-400/10 text-cyan-200"
+                    : bookmarks.length > 0
+                      ? "border-cyan-500/50 text-cyan-200 hover:border-cyan-300"
+                      : "border-slate-700 text-slate-200 hover:border-cyan-400 hover:text-cyan-200"
+                }`}
+                onClick={
+                  handleBookmarkPopoverToggle
+                }
+                ref={bookmarkButtonRef}
+                title={
+                  bookmarks.length === 0
+                    ? "Audiobook bookmarks"
+                    : `${bookmarks.length} audiobook ${
+                        bookmarks.length === 1
+                          ? "bookmark"
+                          : "bookmarks"
+                      }`
+                }
+                type="button"
+              >
+                🔖
+              </button>
+
+              <button
                 aria-controls={`sleep-timer-popover-${playerKey}`}
                 aria-expanded={
                   sleepTimerPopoverOpen
@@ -7335,6 +8350,38 @@ function ResumeAudioPlayer({
             </div>
 
             <div className="flex w-full shrink-0 items-center justify-between gap-2 lg:col-start-3 lg:row-start-1 lg:w-auto lg:justify-start">
+              <button
+                aria-controls={`audiobook-bookmarks-${playerKey}`}
+                aria-expanded={
+                  bookmarkPopoverOpen
+                }
+                aria-haspopup="dialog"
+                aria-label="Audiobook bookmarks"
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border text-sm transition ${
+                  bookmarkPopoverOpen
+                    ? "border-cyan-400 bg-cyan-400/10 text-cyan-200"
+                    : bookmarks.length > 0
+                      ? "border-cyan-500/50 text-cyan-200 hover:border-cyan-300"
+                      : "border-slate-700 text-slate-200 hover:border-cyan-400 hover:text-cyan-200"
+                }`}
+                onClick={
+                  handleBookmarkPopoverToggle
+                }
+                ref={bookmarkButtonRef}
+                title={
+                  bookmarks.length === 0
+                    ? "Audiobook bookmarks"
+                    : `${bookmarks.length} audiobook ${
+                        bookmarks.length === 1
+                          ? "bookmark"
+                          : "bookmarks"
+                      }`
+                }
+                type="button"
+              >
+                🔖
+              </button>
+
               <button
                 aria-controls={`sleep-timer-popover-${playerKey}`}
                 aria-expanded={
