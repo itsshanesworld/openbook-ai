@@ -5162,6 +5162,18 @@ function ResumeAudioPlayer({
   );
 
   const [
+    bookmarkSearchQuery,
+    setBookmarkSearchQuery,
+  ] = useState("");
+
+  const [
+    selectedBookmarkTag,
+    setSelectedBookmarkTag,
+  ] = useState<string | null>(
+    null,
+  );
+
+  const [
     newBookmarkName,
     setNewBookmarkName,
   ] = useState("");
@@ -5266,6 +5278,115 @@ function ResumeAudioPlayer({
   const playerKey =
     `${jobId}:${format.toLowerCase()}`;
 
+  const bookmarkTags =
+    useMemo(
+      () => {
+        const tagsByKey =
+          new Map<
+            string,
+            string
+          >();
+
+        for (const bookmark of bookmarks) {
+          for (
+            const tag of bookmark.tags ?? []
+          ) {
+            const comparisonKey =
+              tag.toLocaleLowerCase();
+
+            if (
+              !tagsByKey.has(
+                comparisonKey,
+              )
+            ) {
+              tagsByKey.set(
+                comparisonKey,
+                tag,
+              );
+            }
+          }
+        }
+
+        return Array.from(
+          tagsByKey.values(),
+        ).sort(
+          (first, second) =>
+            first.localeCompare(
+              second,
+              undefined,
+              {
+                sensitivity: "base",
+              },
+            ),
+        );
+      },
+      [
+        bookmarks,
+      ],
+    );
+
+  const filteredBookmarks =
+    useMemo(
+      () => {
+        const normalizedQuery =
+          bookmarkSearchQuery
+            .trim()
+            .toLocaleLowerCase();
+
+        const normalizedSelectedTag =
+          selectedBookmarkTag
+            ?.toLocaleLowerCase() ??
+          null;
+
+        return bookmarks.filter(
+          (bookmark) => {
+            const matchesTag =
+              normalizedSelectedTag ===
+                null ||
+              (
+                bookmark.tags ?? []
+              ).some(
+                (tag) =>
+                  tag.toLocaleLowerCase() ===
+                  normalizedSelectedTag,
+              );
+
+            if (!matchesTag) {
+              return false;
+            }
+
+            if (
+              normalizedQuery === ""
+            ) {
+              return true;
+            }
+
+            const searchableText = [
+              bookmark.name,
+              bookmark.note ?? "",
+              bookmark.chapterTitle ?? "",
+              ...(bookmark.tags ?? []),
+            ]
+              .join(" ")
+              .toLocaleLowerCase();
+
+            return searchableText.includes(
+              normalizedQuery,
+            );
+          },
+        );
+      },
+      [
+        bookmarkSearchQuery,
+        bookmarks,
+        selectedBookmarkTag,
+      ],
+    );
+
+  const bookmarkFiltersActive =
+    bookmarkSearchQuery.trim() !== "" ||
+    selectedBookmarkTag !== null;
+
 
   useEffect(() => {
     setNowPlayingCollapsed(
@@ -5311,6 +5432,14 @@ function ResumeAudioPlayer({
 
     setBookmarkPopoverOpen(
       false,
+    );
+
+    setBookmarkSearchQuery(
+      "",
+    );
+
+    setSelectedBookmarkTag(
+      null,
     );
 
     setNewBookmarkName(
@@ -5375,6 +5504,29 @@ function ResumeAudioPlayer({
     };
   }, [
     jobId,
+  ]);
+
+
+  useEffect(() => {
+    if (selectedBookmarkTag === null) {
+      return;
+    }
+
+    const selectedTagStillExists =
+      bookmarkTags.some(
+        (tag) =>
+          tag.toLocaleLowerCase() ===
+          selectedBookmarkTag.toLocaleLowerCase(),
+      );
+
+    if (!selectedTagStillExists) {
+      setSelectedBookmarkTag(
+        null,
+      );
+    }
+  }, [
+    bookmarkTags,
+    selectedBookmarkTag,
   ]);
 
 
@@ -7742,13 +7894,142 @@ function ResumeAudioPlayer({
                 </p>
               </div>
 
+              {bookmarks.length > 0 && (
+                <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+                  <div className="flex flex-wrap items-end gap-2">
+                    <div className="min-w-0 flex-1">
+                      <label
+                        className="mb-1 block text-xs font-semibold text-slate-400"
+                        htmlFor={`bookmark-search-${playerKey}`}
+                      >
+                        Search bookmarks
+                      </label>
+
+                      <input
+                        aria-label="Search audiobook bookmarks"
+                        className="h-9 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-slate-200 outline-none transition focus:border-cyan-400"
+                        id={`bookmark-search-${playerKey}`}
+                        onChange={(event) =>
+                          setBookmarkSearchQuery(
+                            event.target.value,
+                          )
+                        }
+                        placeholder="Search name, note, chapter, or tag"
+                        type="search"
+                        value={
+                          bookmarkSearchQuery
+                        }
+                      />
+                    </div>
+
+                    {bookmarkFiltersActive && (
+                      <button
+                        className="h-9 shrink-0 rounded-lg border border-slate-700 px-3 text-xs font-semibold text-slate-300 transition hover:border-cyan-400 hover:text-cyan-200"
+                        onClick={() => {
+                          setBookmarkSearchQuery(
+                            "",
+                          );
+
+                          setSelectedBookmarkTag(
+                            null,
+                          );
+                        }}
+                        type="button"
+                      >
+                        Clear filters
+                      </button>
+                    )}
+                  </div>
+
+                  {bookmarkTags.length > 0 && (
+                    <div className="mt-3">
+                      <p className="text-xs font-semibold text-slate-400">
+                        Filter by tag
+                      </p>
+
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        <button
+                          aria-pressed={
+                            selectedBookmarkTag ===
+                            null
+                          }
+                          className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${
+                            selectedBookmarkTag ===
+                            null
+                              ? "border-cyan-400 bg-cyan-400/10 text-cyan-200"
+                              : "border-slate-700 text-slate-400 hover:border-cyan-400 hover:text-cyan-200"
+                          }`}
+                          onClick={() =>
+                            setSelectedBookmarkTag(
+                              null,
+                            )
+                          }
+                          type="button"
+                        >
+                          All tags
+                        </button>
+
+                        {bookmarkTags.map(
+                          (tag) => {
+                            const selected =
+                              selectedBookmarkTag
+                                ?.toLocaleLowerCase() ===
+                              tag.toLocaleLowerCase();
+
+                            return (
+                              <button
+                                aria-pressed={
+                                  selected
+                                }
+                                className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${
+                                  selected
+                                    ? "border-cyan-400 bg-cyan-400/10 text-cyan-200"
+                                    : "border-slate-700 text-slate-400 hover:border-cyan-400 hover:text-cyan-200"
+                                }`}
+                                key={
+                                  tag.toLocaleLowerCase()
+                                }
+                                onClick={() =>
+                                  setSelectedBookmarkTag(
+                                    tag,
+                                  )
+                                }
+                                type="button"
+                              >
+                                #{tag}
+                              </button>
+                            );
+                          },
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  <p
+                    aria-live="polite"
+                    className="mt-3 text-xs text-slate-500"
+                  >
+                    {filteredBookmarks.length} of{" "}
+                    {bookmarks.length}{" "}
+                    {bookmarks.length === 1
+                      ? "bookmark"
+                      : "bookmarks"}
+                  </p>
+                </div>
+              )}
+
               <div className="mt-3 space-y-2">
                 {bookmarks.length === 0 ? (
                   <p className="rounded-xl border border-dashed border-slate-700 px-3 py-4 text-center text-sm text-slate-500">
                     No bookmarks saved for this audiobook yet.
                   </p>
+                ) : filteredBookmarks.length ===
+                  0 ? (
+                  <p className="rounded-xl border border-dashed border-slate-700 px-3 py-4 text-center text-sm text-slate-500">
+                    No bookmarks match the current search and tag filters.
+                  </p>
                 ) : (
-                  bookmarks.map(
+                  filteredBookmarks.map(
                     (bookmark) => (
                       <div
                         className="rounded-xl border border-slate-800 bg-slate-900/60 p-3"
