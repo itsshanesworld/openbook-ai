@@ -3656,6 +3656,12 @@ const AUDIOBOOK_BOOKMARK_LIMIT =
   50;
 const AUDIOBOOK_BOOKMARK_NAME_MAX_LENGTH =
   120;
+const AUDIOBOOK_BOOKMARK_NOTE_MAX_LENGTH =
+  500;
+const AUDIOBOOK_BOOKMARK_TAG_LIMIT =
+  8;
+const AUDIOBOOK_BOOKMARK_TAG_MAX_LENGTH =
+  24;
 const AUDIOBOOK_BOOKMARK_CHAPTER_MAX_LENGTH =
   200;
 const PLAYBACK_LIBRARY_EVENT =
@@ -3681,6 +3687,8 @@ interface AudiobookBookmark {
   positionSeconds: number;
   createdAt: number;
   chapterTitle?: string;
+  note?: string;
+  tags?: string[];
 }
 
 
@@ -3699,6 +3707,100 @@ function normalizeAudiobookBookmarkName(
       0,
       AUDIOBOOK_BOOKMARK_NAME_MAX_LENGTH,
     );
+}
+
+
+function normalizeAudiobookBookmarkNote(
+  value: unknown,
+): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const note =
+    value
+      .trim()
+      .slice(
+        0,
+        AUDIOBOOK_BOOKMARK_NOTE_MAX_LENGTH,
+      );
+
+  return note === ""
+    ? undefined
+    : note;
+}
+
+
+function normalizeAudiobookBookmarkTags(
+  value: unknown,
+): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const tags: string[] = [];
+  const normalizedTags =
+    new Set<string>();
+
+  for (const candidate of value) {
+    if (typeof candidate !== "string") {
+      continue;
+    }
+
+    const tag =
+      candidate
+        .trim()
+        .replace(
+          /^#+/,
+          "",
+        )
+        .trim()
+        .slice(
+          0,
+          AUDIOBOOK_BOOKMARK_TAG_MAX_LENGTH,
+        );
+
+    if (tag === "") {
+      continue;
+    }
+
+    const comparisonKey =
+      tag.toLocaleLowerCase();
+
+    if (
+      normalizedTags.has(
+        comparisonKey,
+      )
+    ) {
+      continue;
+    }
+
+    normalizedTags.add(
+      comparisonKey,
+    );
+
+    tags.push(
+      tag,
+    );
+
+    if (
+      tags.length >=
+      AUDIOBOOK_BOOKMARK_TAG_LIMIT
+    ) {
+      break;
+    }
+  }
+
+  return tags;
+}
+
+
+function parseAudiobookBookmarkTagsInput(
+  value: string,
+): string[] {
+  return normalizeAudiobookBookmarkTags(
+    value.split(","),
+  );
 }
 
 
@@ -3780,6 +3882,16 @@ function normalizeAudiobookBookmarks(
           );
     }
 
+    const note =
+      normalizeAudiobookBookmarkNote(
+        record.note,
+      );
+
+    const tags =
+      normalizeAudiobookBookmarkTags(
+        record.tags,
+      );
+
     bookmarks.push(
       {
         id: record.id.trim(),
@@ -3788,6 +3900,11 @@ function normalizeAudiobookBookmarks(
         createdAt,
         chapterTitle:
           storedChapterTitle,
+        note,
+        tags:
+          tags.length > 0
+            ? tags
+            : undefined,
       },
     );
   }
@@ -5050,6 +5167,16 @@ function ResumeAudioPlayer({
   ] = useState("");
 
   const [
+    newBookmarkNote,
+    setNewBookmarkNote,
+  ] = useState("");
+
+  const [
+    newBookmarkTags,
+    setNewBookmarkTags,
+  ] = useState("");
+
+  const [
     editingBookmarkId,
     setEditingBookmarkId,
   ] = useState<string | null>(
@@ -5059,6 +5186,16 @@ function ResumeAudioPlayer({
   const [
     editingBookmarkName,
     setEditingBookmarkName,
+  ] = useState("");
+
+  const [
+    editingBookmarkNote,
+    setEditingBookmarkNote,
+  ] = useState("");
+
+  const [
+    editingBookmarkTags,
+    setEditingBookmarkTags,
   ] = useState("");
 
   const [
@@ -5180,11 +5317,27 @@ function ResumeAudioPlayer({
       "",
     );
 
+    setNewBookmarkNote(
+      "",
+    );
+
+    setNewBookmarkTags(
+      "",
+    );
+
     setEditingBookmarkId(
       null,
     );
 
     setEditingBookmarkName(
+      "",
+    );
+
+    setEditingBookmarkNote(
+      "",
+    );
+
+    setEditingBookmarkTags(
       "",
     );
 
@@ -5444,6 +5597,14 @@ function ResumeAudioPlayer({
     );
 
     setEditingBookmarkName(
+      "",
+    );
+
+    setEditingBookmarkNote(
+      "",
+    );
+
+    setEditingBookmarkTags(
       "",
     );
   }, [
@@ -7012,6 +7173,16 @@ function ResumeAudioPlayer({
         newBookmarkName,
       );
 
+    const normalizedNote =
+      normalizeAudiobookBookmarkNote(
+        newBookmarkNote,
+      );
+
+    const normalizedTags =
+      parseAudiobookBookmarkTagsInput(
+        newBookmarkTags,
+      );
+
     const bookmark:
       AudiobookBookmark = {
         id: createAudiobookBookmarkId(),
@@ -7033,6 +7204,12 @@ function ResumeAudioPlayer({
               AUDIOBOOK_BOOKMARK_CHAPTER_MAX_LENGTH,
             ) ||
           undefined,
+        note:
+          normalizedNote,
+        tags:
+          normalizedTags.length > 0
+            ? normalizedTags
+            : undefined,
       };
 
     commitAudiobookBookmarks(
@@ -7043,6 +7220,14 @@ function ResumeAudioPlayer({
     );
 
     setNewBookmarkName(
+      "",
+    );
+
+    setNewBookmarkNote(
+      "",
+    );
+
+    setNewBookmarkTags(
       "",
     );
   }
@@ -7088,7 +7273,7 @@ function ResumeAudioPlayer({
   }
 
 
-  function handleStartBookmarkRename(
+  function handleStartBookmarkEdit(
     bookmark: AudiobookBookmark,
   ): void {
     setEditingBookmarkId(
@@ -7098,10 +7283,20 @@ function ResumeAudioPlayer({
     setEditingBookmarkName(
       bookmark.name,
     );
+
+    setEditingBookmarkNote(
+      bookmark.note ?? "",
+    );
+
+    setEditingBookmarkTags(
+      bookmark.tags?.join(
+        ", ",
+      ) ?? "",
+    );
   }
 
 
-  function handleSaveBookmarkRename(
+  function handleSaveBookmarkEdit(
     bookmarkId: string,
   ): void {
     const bookmark =
@@ -7120,6 +7315,16 @@ function ResumeAudioPlayer({
         editingBookmarkName,
       );
 
+    const normalizedNote =
+      normalizeAudiobookBookmarkNote(
+        editingBookmarkNote,
+      );
+
+    const normalizedTags =
+      parseAudiobookBookmarkTagsInput(
+        editingBookmarkTags,
+      );
+
     const nextName =
       normalizedName !== ""
         ? normalizedName
@@ -7136,11 +7341,22 @@ function ResumeAudioPlayer({
             ? {
                 ...candidate,
                 name: nextName,
+                note:
+                  normalizedNote,
+                tags:
+                  normalizedTags.length > 0
+                    ? normalizedTags
+                    : undefined,
               }
             : candidate,
       ),
     );
 
+    handleCancelBookmarkEdit();
+  }
+
+
+  function handleCancelBookmarkEdit(): void {
     setEditingBookmarkId(
       null,
     );
@@ -7148,15 +7364,12 @@ function ResumeAudioPlayer({
     setEditingBookmarkName(
       "",
     );
-  }
 
-
-  function handleCancelBookmarkRename(): void {
-    setEditingBookmarkId(
-      null,
+    setEditingBookmarkNote(
+      "",
     );
 
-    setEditingBookmarkName(
+    setEditingBookmarkTags(
       "",
     );
   }
@@ -7177,7 +7390,7 @@ function ResumeAudioPlayer({
       editingBookmarkId ===
       bookmarkId
     ) {
-      handleCancelBookmarkRename();
+      handleCancelBookmarkEdit();
     }
   }
 
@@ -7378,7 +7591,7 @@ function ResumeAudioPlayer({
                       false,
                     );
 
-                    handleCancelBookmarkRename();
+                    handleCancelBookmarkEdit();
 
                     bookmarkButtonRef.current?.focus();
                   }}
@@ -7390,67 +7603,138 @@ function ResumeAudioPlayer({
               </div>
 
               <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3">
-                <label
-                  className="block text-xs font-semibold text-slate-400"
-                  htmlFor={`new-audiobook-bookmark-${playerKey}`}
-                >
+                <p className="text-xs font-semibold text-slate-400">
                   Save current position
-                </label>
+                </p>
 
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <input
-                    aria-label="New bookmark name"
-                    autoFocus
-                    className="h-9 min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-slate-200 outline-none transition focus:border-cyan-400"
-                    id={`new-audiobook-bookmark-${playerKey}`}
-                    maxLength={
-                      AUDIOBOOK_BOOKMARK_NAME_MAX_LENGTH
-                    }
-                    onChange={(event) =>
-                      setNewBookmarkName(
-                        event.target.value,
-                      )
-                    }
-                    onKeyDown={(event) => {
-                      if (
-                        event.key ===
-                          "Enter" &&
-                        !event.nativeEvent
-                          .isComposing
-                      ) {
-                        event.preventDefault();
-                        handleAddBookmark();
+                <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                  <div className="sm:col-span-2">
+                    <label
+                      className="mb-1 block text-xs font-medium text-slate-400"
+                      htmlFor={`new-audiobook-bookmark-${playerKey}`}
+                    >
+                      Name
+                    </label>
+
+                    <input
+                      aria-label="New bookmark name"
+                      autoFocus
+                      className="h-9 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-slate-200 outline-none transition focus:border-cyan-400"
+                      id={`new-audiobook-bookmark-${playerKey}`}
+                      maxLength={
+                        AUDIOBOOK_BOOKMARK_NAME_MAX_LENGTH
                       }
-                    }}
-                    placeholder={`Bookmark at ${formatPlaybackPosition(
-                      currentTime,
-                    )}`}
-                    type="text"
-                    value={
-                      newBookmarkName
-                    }
-                  />
+                      onChange={(event) =>
+                        setNewBookmarkName(
+                          event.target.value,
+                        )
+                      }
+                      onKeyDown={(event) => {
+                        if (
+                          event.key ===
+                            "Enter" &&
+                          !event.nativeEvent
+                            .isComposing
+                        ) {
+                          event.preventDefault();
+                          handleAddBookmark();
+                        }
+                      }}
+                      placeholder={`Bookmark at ${formatPlaybackPosition(
+                        currentTime,
+                      )}`}
+                      type="text"
+                      value={
+                        newBookmarkName
+                      }
+                    />
+                  </div>
 
-                  <button
-                    aria-label="Save audiobook bookmark"
-                    className="h-9 shrink-0 rounded-lg border border-cyan-500/50 px-3 text-xs font-semibold text-cyan-200 transition hover:border-cyan-300 disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-500"
-                    disabled={
-                      bookmarks.length >=
-                      AUDIOBOOK_BOOKMARK_LIMIT
-                    }
-                    onClick={
-                      handleAddBookmark
-                    }
-                    title="Save current audiobook position"
-                    type="button"
-                  >
-                    Add bookmark
-                  </button>
+                  <div className="sm:col-span-2">
+                    <label
+                      className="mb-1 block text-xs font-medium text-slate-400"
+                      htmlFor={`new-audiobook-bookmark-note-${playerKey}`}
+                    >
+                      Note
+                    </label>
+
+                    <textarea
+                      aria-label="New bookmark note"
+                      className="min-h-20 w-full resize-y rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 outline-none transition focus:border-cyan-400"
+                      id={`new-audiobook-bookmark-note-${playerKey}`}
+                      maxLength={
+                        AUDIOBOOK_BOOKMARK_NOTE_MAX_LENGTH
+                      }
+                      onChange={(event) =>
+                        setNewBookmarkNote(
+                          event.target.value,
+                        )
+                      }
+                      placeholder="Optional note"
+                      value={
+                        newBookmarkNote
+                      }
+                    />
+                  </div>
+
+                  <div className="min-w-0">
+                    <label
+                      className="mb-1 block text-xs font-medium text-slate-400"
+                      htmlFor={`new-audiobook-bookmark-tags-${playerKey}`}
+                    >
+                      Tags
+                    </label>
+
+                    <input
+                      aria-label="New bookmark tags"
+                      className="h-9 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-slate-200 outline-none transition focus:border-cyan-400"
+                      id={`new-audiobook-bookmark-tags-${playerKey}`}
+                      onChange={(event) =>
+                        setNewBookmarkTags(
+                          event.target.value,
+                        )
+                      }
+                      placeholder="favorite, quote, review"
+                      type="text"
+                      value={
+                        newBookmarkTags
+                      }
+                    />
+
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      Comma-separated · up to{" "}
+                      {AUDIOBOOK_BOOKMARK_TAG_LIMIT} tags
+                    </p>
+                  </div>
+
+                  <div className="flex items-end">
+                    <button
+                      aria-label="Save audiobook bookmark"
+                      className="h-9 w-full rounded-lg border border-cyan-500/50 px-3 text-xs font-semibold text-cyan-200 transition hover:border-cyan-300 disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-500 sm:w-auto"
+                      disabled={
+                        bookmarks.length >=
+                        AUDIOBOOK_BOOKMARK_LIMIT
+                      }
+                      onClick={
+                        handleAddBookmark
+                      }
+                      title="Save current audiobook position"
+                      type="button"
+                    >
+                      Add bookmark
+                    </button>
+                  </div>
                 </div>
 
-                <p className="mt-2 text-xs text-slate-500">
+                <p className="mt-3 text-xs text-slate-500">
                   {bookmarks.length} /{" "}
                   {AUDIOBOOK_BOOKMARK_LIMIT} saved
+                  {" · "}
+                  Notes up to{" "}
+                  {AUDIOBOOK_BOOKMARK_NOTE_MAX_LENGTH} characters
+                  {" · "}
+                  Tags up to{" "}
+                  {AUDIOBOOK_BOOKMARK_TAG_MAX_LENGTH} characters each
                   {bookmarks.length >=
                   AUDIOBOOK_BOOKMARK_LIMIT
                     ? " · Delete one to add another."
@@ -7474,69 +7758,171 @@ function ResumeAudioPlayer({
                       >
                         {editingBookmarkId ===
                         bookmark.id ? (
-                          <div className="flex flex-wrap items-center gap-2">
-                            <input
-                              aria-label={`Rename bookmark ${bookmark.name}`}
-                              autoFocus
-                              className="h-9 min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-slate-200 outline-none transition focus:border-cyan-400"
-                              maxLength={
-                                AUDIOBOOK_BOOKMARK_NAME_MAX_LENGTH
-                              }
-                              onChange={(event) =>
-                                setEditingBookmarkName(
-                                  event.target.value,
-                                )
-                              }
-                              onKeyDown={(event) => {
-                                if (
-                                  event.key ===
-                                    "Enter" &&
-                                  !event.nativeEvent
-                                    .isComposing
-                                ) {
-                                  event.preventDefault();
+                          <div className="space-y-3">
+                            <div>
+                              <label
+                                className="mb-1 block text-xs font-medium text-slate-400"
+                                htmlFor={`bookmark-name-${bookmark.id}`}
+                              >
+                                Name
+                              </label>
 
-                                  handleSaveBookmarkRename(
+                              <input
+                                aria-label={`Edit bookmark name ${bookmark.name}`}
+                                autoFocus
+                                className="h-9 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-slate-200 outline-none transition focus:border-cyan-400"
+                                id={`bookmark-name-${bookmark.id}`}
+                                maxLength={
+                                  AUDIOBOOK_BOOKMARK_NAME_MAX_LENGTH
+                                }
+                                onChange={(event) =>
+                                  setEditingBookmarkName(
+                                    event.target.value,
+                                  )
+                                }
+                                onKeyDown={(event) => {
+                                  if (
+                                    event.key ===
+                                      "Enter" &&
+                                    !event.nativeEvent
+                                      .isComposing
+                                  ) {
+                                    event.preventDefault();
+
+                                    handleSaveBookmarkEdit(
+                                      bookmark.id,
+                                    );
+                                  }
+
+                                  if (
+                                    event.key ===
+                                    "Escape"
+                                  ) {
+                                    event.stopPropagation();
+
+                                    handleCancelBookmarkEdit();
+                                  }
+                                }}
+                                type="text"
+                                value={
+                                  editingBookmarkName
+                                }
+                              />
+                            </div>
+
+                            <div>
+                              <label
+                                className="mb-1 block text-xs font-medium text-slate-400"
+                                htmlFor={`bookmark-note-${bookmark.id}`}
+                              >
+                                Note
+                              </label>
+
+                              <textarea
+                                aria-label={`Edit bookmark note ${bookmark.name}`}
+                                className="min-h-20 w-full resize-y rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 outline-none transition focus:border-cyan-400"
+                                id={`bookmark-note-${bookmark.id}`}
+                                maxLength={
+                                  AUDIOBOOK_BOOKMARK_NOTE_MAX_LENGTH
+                                }
+                                onChange={(event) =>
+                                  setEditingBookmarkNote(
+                                    event.target.value,
+                                  )
+                                }
+                                onKeyDown={(event) => {
+                                  if (
+                                    event.key ===
+                                    "Escape"
+                                  ) {
+                                    event.stopPropagation();
+
+                                    handleCancelBookmarkEdit();
+                                  }
+                                }}
+                                placeholder="Optional note"
+                                value={
+                                  editingBookmarkNote
+                                }
+                              />
+                            </div>
+
+                            <div>
+                              <label
+                                className="mb-1 block text-xs font-medium text-slate-400"
+                                htmlFor={`bookmark-tags-${bookmark.id}`}
+                              >
+                                Tags
+                              </label>
+
+                              <input
+                                aria-label={`Edit bookmark tags ${bookmark.name}`}
+                                className="h-9 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-slate-200 outline-none transition focus:border-cyan-400"
+                                id={`bookmark-tags-${bookmark.id}`}
+                                onChange={(event) =>
+                                  setEditingBookmarkTags(
+                                    event.target.value,
+                                  )
+                                }
+                                onKeyDown={(event) => {
+                                  if (
+                                    event.key ===
+                                      "Enter" &&
+                                    !event.nativeEvent
+                                      .isComposing
+                                  ) {
+                                    event.preventDefault();
+
+                                    handleSaveBookmarkEdit(
+                                      bookmark.id,
+                                    );
+                                  }
+
+                                  if (
+                                    event.key ===
+                                    "Escape"
+                                  ) {
+                                    event.stopPropagation();
+
+                                    handleCancelBookmarkEdit();
+                                  }
+                                }}
+                                placeholder="favorite, quote, review"
+                                type="text"
+                                value={
+                                  editingBookmarkTags
+                                }
+                              />
+
+                              <p className="mt-1 text-[11px] text-slate-500">
+                                Comma-separated · up to{" "}
+                                {AUDIOBOOK_BOOKMARK_TAG_LIMIT} tags
+                              </p>
+                            </div>
+
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                className="h-9 rounded-lg border border-cyan-500/50 px-3 text-xs font-semibold text-cyan-200 transition hover:border-cyan-300"
+                                onClick={() =>
+                                  handleSaveBookmarkEdit(
                                     bookmark.id,
-                                  );
+                                  )
                                 }
+                                type="button"
+                              >
+                                Save changes
+                              </button>
 
-                                if (
-                                  event.key ===
-                                  "Escape"
-                                ) {
-                                  event.stopPropagation();
-
-                                  handleCancelBookmarkRename();
+                              <button
+                                className="h-9 rounded-lg border border-slate-700 px-3 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
+                                onClick={
+                                  handleCancelBookmarkEdit
                                 }
-                              }}
-                              type="text"
-                              value={
-                                editingBookmarkName
-                              }
-                            />
-
-                            <button
-                              className="h-9 rounded-lg border border-cyan-500/50 px-3 text-xs font-semibold text-cyan-200 transition hover:border-cyan-300"
-                              onClick={() =>
-                                handleSaveBookmarkRename(
-                                  bookmark.id,
-                                )
-                              }
-                              type="button"
-                            >
-                              Save
-                            </button>
-
-                            <button
-                              className="h-9 rounded-lg border border-slate-700 px-3 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
-                              onClick={
-                                handleCancelBookmarkRename
-                              }
-                              type="button"
-                            >
-                              Cancel
-                            </button>
+                                type="button"
+                              >
+                                Cancel
+                              </button>
+                            </div>
                           </div>
                         ) : (
                           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -7575,20 +7961,42 @@ function ResumeAudioPlayer({
                                   }
                                 </span>
                               )}
+
+                              {bookmark.note && (
+                                <span className="mt-2 block whitespace-pre-wrap break-words text-xs leading-5 text-slate-300">
+                                  {bookmark.note}
+                                </span>
+                              )}
+
+                              {bookmark.tags &&
+                                bookmark.tags.length > 0 && (
+                                <span className="mt-2 flex flex-wrap gap-1.5">
+                                  {bookmark.tags.map(
+                                    (tag) => (
+                                      <span
+                                        className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-[11px] font-medium text-cyan-200"
+                                        key={`${bookmark.id}-${tag}`}
+                                      >
+                                        #{tag}
+                                      </span>
+                                    ),
+                                  )}
+                                </span>
+                              )}
                             </button>
 
                             <div className="flex shrink-0 gap-2">
                               <button
-                                aria-label={`Rename bookmark ${bookmark.name}`}
+                                aria-label={`Edit bookmark ${bookmark.name}`}
                                 className="h-8 rounded-lg border border-slate-700 px-3 text-xs font-semibold text-slate-300 transition hover:border-cyan-400 hover:text-cyan-200"
                                 onClick={() =>
-                                  handleStartBookmarkRename(
+                                  handleStartBookmarkEdit(
                                     bookmark,
                                   )
                                 }
                                 type="button"
                               >
-                                Rename
+                                Edit
                               </button>
 
                               <button
