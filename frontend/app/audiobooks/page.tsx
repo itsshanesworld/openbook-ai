@@ -3698,6 +3698,15 @@ interface AudiobookBookmarkEventDetail {
 }
 
 
+type AudiobookBookmarkSortMode =
+  | "position"
+  | "newest"
+  | "oldest"
+  | "name-asc"
+  | "name-desc"
+  | "tag-asc";
+
+
 function normalizeAudiobookBookmarkName(
   value: string,
 ): string {
@@ -5174,6 +5183,13 @@ function ResumeAudioPlayer({
   );
 
   const [
+    bookmarkSortMode,
+    setBookmarkSortMode,
+  ] = useState<AudiobookBookmarkSortMode>(
+    "position",
+  );
+
+  const [
     newBookmarkName,
     setNewBookmarkName,
   ] = useState("");
@@ -5338,46 +5354,191 @@ function ResumeAudioPlayer({
             ?.toLocaleLowerCase() ??
           null;
 
-        return bookmarks.filter(
-          (bookmark) => {
-            const matchesTag =
-              normalizedSelectedTag ===
-                null ||
-              (
-                bookmark.tags ?? []
-              ).some(
-                (tag) =>
-                  tag.toLocaleLowerCase() ===
-                  normalizedSelectedTag,
+        const matchingBookmarks =
+          bookmarks.filter(
+            (bookmark) => {
+              const matchesTag =
+                normalizedSelectedTag ===
+                  null ||
+                (
+                  bookmark.tags ?? []
+                ).some(
+                  (tag) =>
+                    tag.toLocaleLowerCase() ===
+                    normalizedSelectedTag,
+                );
+
+              if (!matchesTag) {
+                return false;
+              }
+
+              if (
+                normalizedQuery === ""
+              ) {
+                return true;
+              }
+
+              const searchableText = [
+                bookmark.name,
+                bookmark.note ?? "",
+                bookmark.chapterTitle ?? "",
+                ...(bookmark.tags ?? []),
+              ]
+                .join(" ")
+                .toLocaleLowerCase();
+
+              return searchableText.includes(
+                normalizedQuery,
               );
+            },
+          );
 
-            if (!matchesTag) {
-              return false;
+        function compareBookmarkNames(
+          first: AudiobookBookmark,
+          second: AudiobookBookmark,
+        ): number {
+          return first.name.localeCompare(
+            second.name,
+            undefined,
+            {
+              sensitivity: "base",
+            },
+          );
+        }
+
+        function getBookmarkFirstTag(
+          bookmark: AudiobookBookmark,
+        ): string | null {
+          const tags =
+            bookmark.tags ?? [];
+
+          if (tags.length === 0) {
+            return null;
+          }
+
+          return [...tags]
+            .sort(
+              (first, second) =>
+                first.localeCompare(
+                  second,
+                  undefined,
+                  {
+                    sensitivity: "base",
+                  },
+                ),
+            )[0];
+        }
+
+        return matchingBookmarks.sort(
+          (first, second) => {
+            switch (bookmarkSortMode) {
+              case "newest":
+                return (
+                  second.createdAt -
+                    first.createdAt ||
+                  first.positionSeconds -
+                    second.positionSeconds
+                );
+
+              case "oldest":
+                return (
+                  first.createdAt -
+                    second.createdAt ||
+                  first.positionSeconds -
+                    second.positionSeconds
+                );
+
+              case "name-asc":
+                return (
+                  compareBookmarkNames(
+                    first,
+                    second,
+                  ) ||
+                  first.positionSeconds -
+                    second.positionSeconds
+                );
+
+              case "name-desc":
+                return (
+                  compareBookmarkNames(
+                    second,
+                    first,
+                  ) ||
+                  first.positionSeconds -
+                    second.positionSeconds
+                );
+
+              case "tag-asc": {
+                const firstTag =
+                  getBookmarkFirstTag(
+                    first,
+                  );
+
+                const secondTag =
+                  getBookmarkFirstTag(
+                    second,
+                  );
+
+                if (
+                  firstTag === null &&
+                  secondTag !== null
+                ) {
+                  return 1;
+                }
+
+                if (
+                  firstTag !== null &&
+                  secondTag === null
+                ) {
+                  return -1;
+                }
+
+                if (
+                  firstTag !== null &&
+                  secondTag !== null
+                ) {
+                  const tagComparison =
+                    firstTag.localeCompare(
+                      secondTag,
+                      undefined,
+                      {
+                        sensitivity:
+                          "base",
+                      },
+                    );
+
+                  if (
+                    tagComparison !== 0
+                  ) {
+                    return tagComparison;
+                  }
+                }
+
+                return (
+                  compareBookmarkNames(
+                    first,
+                    second,
+                  ) ||
+                  first.positionSeconds -
+                    second.positionSeconds
+                );
+              }
+
+              case "position":
+              default:
+                return (
+                  first.positionSeconds -
+                    second.positionSeconds ||
+                  first.createdAt -
+                    second.createdAt
+                );
             }
-
-            if (
-              normalizedQuery === ""
-            ) {
-              return true;
-            }
-
-            const searchableText = [
-              bookmark.name,
-              bookmark.note ?? "",
-              bookmark.chapterTitle ?? "",
-              ...(bookmark.tags ?? []),
-            ]
-              .join(" ")
-              .toLocaleLowerCase();
-
-            return searchableText.includes(
-              normalizedQuery,
-            );
           },
         );
       },
       [
         bookmarkSearchQuery,
+        bookmarkSortMode,
         bookmarks,
         selectedBookmarkTag,
       ],
@@ -5440,6 +5601,10 @@ function ResumeAudioPlayer({
 
     setSelectedBookmarkTag(
       null,
+    );
+
+    setBookmarkSortMode(
+      "position",
     );
 
     setNewBookmarkName(
@@ -7920,6 +8085,49 @@ function ResumeAudioPlayer({
                           bookmarkSearchQuery
                         }
                       />
+                    </div>
+
+                    <div className="w-full sm:w-auto">
+                      <label
+                        className="mb-1 block text-xs font-semibold text-slate-400"
+                        htmlFor={`bookmark-sort-${playerKey}`}
+                      >
+                        Sort
+                      </label>
+
+                      <select
+                        aria-label="Sort audiobook bookmarks"
+                        className="h-9 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 text-xs font-semibold text-slate-200 outline-none transition focus:border-cyan-400 sm:w-auto"
+                        id={`bookmark-sort-${playerKey}`}
+                        onChange={(event) =>
+                          setBookmarkSortMode(
+                            event.target
+                              .value as AudiobookBookmarkSortMode,
+                          )
+                        }
+                        value={
+                          bookmarkSortMode
+                        }
+                      >
+                        <option value="position">
+                          Playback position
+                        </option>
+                        <option value="newest">
+                          Newest saved
+                        </option>
+                        <option value="oldest">
+                          Oldest saved
+                        </option>
+                        <option value="name-asc">
+                          Name A–Z
+                        </option>
+                        <option value="name-desc">
+                          Name Z–A
+                        </option>
+                        <option value="tag-asc">
+                          Tag A–Z
+                        </option>
+                      </select>
                     </div>
 
                     {bookmarkFiltersActive && (
