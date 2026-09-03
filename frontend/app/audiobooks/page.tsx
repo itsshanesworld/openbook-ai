@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import {
+  ChangeEvent,
   ReactNode,
   RefObject,
   useCallback,
@@ -3652,6 +3653,12 @@ const AUDIOBOOK_BOOKMARK_STORAGE_PREFIX =
   "openbook-audiobook-bookmarks-v1";
 const AUDIOBOOK_BOOKMARK_EVENT =
   "openbook-audiobook-bookmarks-changed";
+const AUDIOBOOK_BOOKMARK_BACKUP_SCHEMA =
+  "openbook-audiobook-bookmarks";
+const AUDIOBOOK_BOOKMARK_BACKUP_VERSION =
+  1;
+const AUDIOBOOK_BOOKMARK_IMPORT_MAX_BYTES =
+  1_000_000;
 const AUDIOBOOK_BOOKMARK_LIMIT =
   50;
 const AUDIOBOOK_BOOKMARK_NAME_MAX_LENGTH =
@@ -3705,6 +3712,26 @@ type AudiobookBookmarkSortMode =
   | "name-asc"
   | "name-desc"
   | "tag-asc";
+
+
+interface AudiobookBookmarkBackupV1 {
+  schema: typeof AUDIOBOOK_BOOKMARK_BACKUP_SCHEMA;
+  version: typeof AUDIOBOOK_BOOKMARK_BACKUP_VERSION;
+  exportedAt: string;
+  audiobook: {
+    jobId: number;
+    format: NowPlayingFormat;
+    title: string;
+    author: string | null;
+  };
+  bookmarks: AudiobookBookmark[];
+}
+
+
+interface AudiobookBookmarkImportFeedback {
+  kind: "success" | "error" | "info";
+  message: string;
+}
 
 
 function normalizeAudiobookBookmarkName(
@@ -3930,6 +3957,183 @@ function normalizeAudiobookBookmarks(
       0,
       AUDIOBOOK_BOOKMARK_LIMIT,
     );
+}
+
+
+function sanitizeAudiobookBookmarkBackupFilenamePart(
+  value: string,
+): string {
+  const sanitized =
+    value
+      .trim()
+      .toLocaleLowerCase()
+      .replace(
+        /[^a-z0-9]+/g,
+        "-",
+      )
+      .replace(
+        /^-+|-+$/g,
+        "",
+      )
+      .slice(
+        0,
+        80,
+      );
+
+  return sanitized === ""
+    ? "audiobook"
+    : sanitized;
+}
+
+
+function parseAudiobookBookmarkBackup(
+  value: unknown,
+): AudiobookBookmarkBackupV1 {
+  if (
+    typeof value !== "object" ||
+    value === null
+  ) {
+    throw new Error(
+      "This file is not a valid OpenBook bookmark backup.",
+    );
+  }
+
+  const record =
+    value as Record<
+      string,
+      unknown
+    >;
+
+  if (
+    record.schema !==
+    AUDIOBOOK_BOOKMARK_BACKUP_SCHEMA
+  ) {
+    throw new Error(
+      "This file is not an OpenBook audiobook bookmark backup.",
+    );
+  }
+
+  if (
+    record.version !==
+    AUDIOBOOK_BOOKMARK_BACKUP_VERSION
+  ) {
+    throw new Error(
+      "This bookmark backup version is not supported.",
+    );
+  }
+
+  if (
+    typeof record.exportedAt !==
+    "string" ||
+    Number.isNaN(
+      Date.parse(
+        record.exportedAt,
+      ),
+    )
+  ) {
+    throw new Error(
+      "The bookmark backup has an invalid export timestamp.",
+    );
+  }
+
+  if (
+    typeof record.audiobook !==
+      "object" ||
+    record.audiobook === null
+  ) {
+    throw new Error(
+      "The bookmark backup is missing audiobook metadata.",
+    );
+  }
+
+  const audiobook =
+    record.audiobook as Record<
+      string,
+      unknown
+    >;
+
+  if (
+    typeof audiobook.jobId !==
+      "number" ||
+    !Number.isFinite(
+      audiobook.jobId,
+    ) ||
+    typeof audiobook.title !==
+      "string" ||
+    audiobook.title.trim() === "" ||
+    (
+      audiobook.author !== null &&
+      typeof audiobook.author !==
+        "string"
+    ) ||
+    (
+      audiobook.format !== "WAV" &&
+      audiobook.format !== "MP3" &&
+      audiobook.format !== "M4B"
+    )
+  ) {
+    throw new Error(
+      "The bookmark backup has invalid audiobook metadata.",
+    );
+  }
+
+  if (!Array.isArray(record.bookmarks)) {
+    throw new Error(
+      "The bookmark backup does not contain a bookmark list.",
+    );
+  }
+
+  if (
+    record.bookmarks.length >
+    AUDIOBOOK_BOOKMARK_LIMIT
+  ) {
+    throw new Error(
+      `The bookmark backup contains more than ${AUDIOBOOK_BOOKMARK_LIMIT} bookmarks.`,
+    );
+  }
+
+  const normalizedBookmarks =
+    normalizeAudiobookBookmarks(
+      record.bookmarks,
+    );
+
+  if (
+    normalizedBookmarks.length !==
+    record.bookmarks.length
+  ) {
+    throw new Error(
+      "The bookmark backup contains one or more invalid bookmark records.",
+    );
+  }
+
+  return {
+    schema:
+      AUDIOBOOK_BOOKMARK_BACKUP_SCHEMA,
+    version:
+      AUDIOBOOK_BOOKMARK_BACKUP_VERSION,
+    exportedAt:
+      record.exportedAt,
+    audiobook: {
+      jobId:
+        audiobook.jobId,
+      format:
+        audiobook.format,
+      title:
+        audiobook.title.trim(),
+      author:
+        typeof audiobook.author ===
+          "string"
+          ? audiobook.author
+              .trim()
+              .slice(
+                0,
+                300,
+              ) || null
+          : null,
+    },
+    bookmarks:
+      normalizedBookmarks,
+  };
 }
 
 
@@ -5190,6 +5394,13 @@ function ResumeAudioPlayer({
   );
 
   const [
+    bookmarkImportFeedback,
+    setBookmarkImportFeedback,
+  ] = useState<AudiobookBookmarkImportFeedback | null>(
+    null,
+  );
+
+  const [
     newBookmarkName,
     setNewBookmarkName,
   ] = useState("");
@@ -5283,6 +5494,11 @@ function ResumeAudioPlayer({
 
   const bookmarkButtonRef =
     useRef<HTMLButtonElement | null>(
+      null,
+    );
+
+  const bookmarkImportInputRef =
+    useRef<HTMLInputElement | null>(
       null,
     );
 
@@ -5605,6 +5821,10 @@ function ResumeAudioPlayer({
 
     setBookmarkSortMode(
       "position",
+    );
+
+    setBookmarkImportFeedback(
+      null,
     );
 
     setNewBookmarkName(
@@ -7433,6 +7653,308 @@ function ResumeAudioPlayer({
   }
 
 
+  function handleExportAudiobookBookmarks(): void {
+    if (
+      typeof window === "undefined"
+    ) {
+      return;
+    }
+
+    const backup:
+      AudiobookBookmarkBackupV1 = {
+        schema:
+          AUDIOBOOK_BOOKMARK_BACKUP_SCHEMA,
+        version:
+          AUDIOBOOK_BOOKMARK_BACKUP_VERSION,
+        exportedAt:
+          new Date().toISOString(),
+        audiobook: {
+          jobId,
+          format,
+          title:
+            bookTitle,
+          author:
+            bookAuthor,
+        },
+        bookmarks,
+      };
+
+    try {
+      const blob =
+        new Blob(
+          [
+            `${JSON.stringify(
+              backup,
+              null,
+              2,
+            )}
+`,
+          ],
+          {
+            type:
+              "application/json;charset=utf-8",
+          },
+        );
+
+      const objectUrl =
+        URL.createObjectURL(
+          blob,
+        );
+
+      const link =
+        document.createElement(
+          "a",
+        );
+
+      link.href =
+        objectUrl;
+
+      link.download =
+        `openbook-${sanitizeAudiobookBookmarkBackupFilenamePart(
+          bookTitle,
+        )}-bookmarks.json`;
+
+      document.body.appendChild(
+        link,
+      );
+
+      link.click();
+      link.remove();
+
+      window.setTimeout(
+        () => {
+          URL.revokeObjectURL(
+            objectUrl,
+          );
+        },
+        0,
+      );
+
+      setBookmarkImportFeedback(
+        {
+          kind: "success",
+          message:
+            `Exported ${bookmarks.length} ${
+              bookmarks.length === 1
+                ? "bookmark"
+                : "bookmarks"
+            }.`,
+        },
+      );
+    } catch {
+      setBookmarkImportFeedback(
+        {
+          kind: "error",
+          message:
+            "Could not export the bookmark backup.",
+        },
+      );
+    }
+  }
+
+
+  async function handleImportAudiobookBookmarks(
+    event: ChangeEvent<HTMLInputElement>,
+  ): Promise<void> {
+    const input =
+      event.currentTarget;
+
+    const file =
+      input.files?.[0];
+
+    input.value =
+      "";
+
+    if (file === undefined) {
+      return;
+    }
+
+    if (
+      file.size >
+      AUDIOBOOK_BOOKMARK_IMPORT_MAX_BYTES
+    ) {
+      setBookmarkImportFeedback(
+        {
+          kind: "error",
+          message:
+            "Bookmark backup is too large. The maximum import size is 1 MB.",
+        },
+      );
+
+      return;
+    }
+
+    try {
+      const sourceText =
+        await file.text();
+
+      let parsedValue:
+        unknown;
+
+      try {
+        parsedValue =
+          JSON.parse(
+            sourceText,
+          );
+      } catch {
+        throw new Error(
+          "The selected file does not contain valid JSON.",
+        );
+      }
+
+      const backup =
+        parseAudiobookBookmarkBackup(
+          parsedValue,
+        );
+
+      if (
+        backup.bookmarks.length === 0
+      ) {
+        setBookmarkImportFeedback(
+          {
+            kind: "info",
+            message:
+              `The backup for "${backup.audiobook.title}" contains no bookmarks.`,
+          },
+        );
+
+        return;
+      }
+
+      const existingIds =
+        new Set(
+          bookmarks.map(
+            (bookmark) =>
+              bookmark.id,
+          ),
+        );
+
+      const importedIds =
+        new Set<string>();
+
+      const availableSlots =
+        Math.max(
+          0,
+          AUDIOBOOK_BOOKMARK_LIMIT -
+            bookmarks.length,
+        );
+
+      const acceptedBookmarks:
+        AudiobookBookmark[] = [];
+
+      let duplicateCount =
+        0;
+
+      let limitSkippedCount =
+        0;
+
+      for (
+        const bookmark
+        of backup.bookmarks
+      ) {
+        if (
+          existingIds.has(
+            bookmark.id,
+          ) ||
+          importedIds.has(
+            bookmark.id,
+          )
+        ) {
+          duplicateCount +=
+            1;
+
+          continue;
+        }
+
+        importedIds.add(
+          bookmark.id,
+        );
+
+        if (
+          acceptedBookmarks.length >=
+          availableSlots
+        ) {
+          limitSkippedCount +=
+            1;
+
+          continue;
+        }
+
+        acceptedBookmarks.push(
+          bookmark,
+        );
+      }
+
+      if (
+        acceptedBookmarks.length > 0
+      ) {
+        commitAudiobookBookmarks(
+          [
+            ...bookmarks,
+            ...acceptedBookmarks,
+          ],
+        );
+      }
+
+      const details:
+        string[] = [
+          `${acceptedBookmarks.length} ${
+            acceptedBookmarks.length === 1
+              ? "bookmark"
+              : "bookmarks"
+          } imported`,
+        ];
+
+      if (
+        duplicateCount > 0
+      ) {
+        details.push(
+          `${duplicateCount} ${
+            duplicateCount === 1
+              ? "duplicate"
+              : "duplicates"
+          } skipped`,
+        );
+      }
+
+      if (
+        limitSkippedCount > 0
+      ) {
+        details.push(
+          `${limitSkippedCount} skipped because the ${AUDIOBOOK_BOOKMARK_LIMIT}-bookmark limit was reached`,
+        );
+      }
+
+      details.push(
+        `source: ${backup.audiobook.title}`,
+      );
+
+      setBookmarkImportFeedback(
+        {
+          kind:
+            acceptedBookmarks.length > 0
+              ? "success"
+              : "info",
+          message:
+            `${details.join(
+              " · ",
+            )}.`,
+        },
+      );
+    } catch (error) {
+      setBookmarkImportFeedback(
+        {
+          kind: "error",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Could not import the bookmark backup.",
+        },
+      );
+    }
+  }
+
+
   function handleBookmarkPopoverToggle(): void {
     const nextOpen =
       !bookmarkPopoverOpen;
@@ -7918,6 +8440,75 @@ function ResumeAudioPlayer({
                   ×
                 </button>
               </div>
+
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  className="h-9 rounded-lg border border-slate-700 px-3 text-xs font-semibold text-slate-300 transition hover:border-cyan-400 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={
+                    bookmarks.length === 0
+                  }
+                  onClick={
+                    handleExportAudiobookBookmarks
+                  }
+                  title={
+                    bookmarks.length === 0
+                      ? "Add a bookmark before exporting"
+                      : "Download bookmark backup as JSON"
+                  }
+                  type="button"
+                >
+                  Export JSON
+                </button>
+
+                <button
+                  className="h-9 rounded-lg border border-slate-700 px-3 text-xs font-semibold text-slate-300 transition hover:border-cyan-400 hover:text-cyan-200"
+                  onClick={() =>
+                    bookmarkImportInputRef.current?.click()
+                  }
+                  title="Import and merge an OpenBook bookmark backup"
+                  type="button"
+                >
+                  Import JSON
+                </button>
+
+                <input
+                  accept=".json,application/json"
+                  aria-label="Import audiobook bookmark backup"
+                  className="hidden"
+                  onChange={
+                    handleImportAudiobookBookmarks
+                  }
+                  ref={
+                    bookmarkImportInputRef
+                  }
+                  type="file"
+                />
+              </div>
+
+              {bookmarkImportFeedback !== null && (
+                <p
+                  aria-live="polite"
+                  className={`mt-2 rounded-lg border px-3 py-2 text-xs ${
+                    bookmarkImportFeedback.kind ===
+                    "error"
+                      ? "border-rose-500/40 bg-rose-500/10 text-rose-200"
+                      : bookmarkImportFeedback.kind ===
+                          "success"
+                        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                        : "border-slate-700 bg-slate-900/60 text-slate-300"
+                  }`}
+                  role={
+                    bookmarkImportFeedback.kind ===
+                    "error"
+                      ? "alert"
+                      : "status"
+                  }
+                >
+                  {
+                    bookmarkImportFeedback.message
+                  }
+                </p>
+              )}
 
               <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3">
                 <p className="text-xs font-semibold text-slate-400">
