@@ -505,6 +505,10 @@ export default function AudiobooksPage() {
   const [voicePreviewUrl, setVoicePreviewUrl] =
     useState<string | null>(null);
   const voicePreviewUrlRef = useRef<string | null>(null);
+  const libraryBookmarkImportInputRef =
+    useRef<HTMLInputElement | null>(
+      null,
+    );
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [exportingMp3Id, setExportingMp3Id] =
@@ -567,6 +571,12 @@ export default function AudiobooksPage() {
 
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [
+    libraryBookmarkBackupFeedback,
+    setLibraryBookmarkBackupFeedback,
+  ] = useState<AudiobookBookmarkImportFeedback | null>(
+    null,
+  );
 
 
   useEffect(() => {
@@ -984,6 +994,443 @@ export default function AudiobooksPage() {
   const jobControlsModified =
     jobFiltersActive ||
     jobSortOrder !== "newest";
+
+
+  function handleExportAudiobookBookmarkLibrary(): void {
+    if (
+      typeof window === "undefined"
+    ) {
+      return;
+    }
+
+    try {
+      const backupEntries:
+        AudiobookBookmarkLibraryBackupEntryV1[] = [];
+
+      for (const job of jobs) {
+        const storedBookmarks =
+          readStoredAudiobookBookmarks(
+            job.id,
+          );
+
+        if (
+          storedBookmarks.length === 0
+        ) {
+          continue;
+        }
+
+        backupEntries.push(
+          {
+            jobId:
+              job.id,
+            audiobook: {
+              bookId:
+                job.book_id,
+              filename:
+                job.book_filename,
+              title:
+                job.book_title,
+              author:
+                job.book_author,
+              format:
+                getAudiobookJobBookmarkBackupFormat(
+                  job,
+                ),
+            },
+            bookmarks:
+              storedBookmarks,
+          },
+        );
+      }
+
+      if (
+        backupEntries.length === 0
+      ) {
+        setLibraryBookmarkBackupFeedback(
+          {
+            kind: "info",
+            message:
+              "There are no audiobook bookmarks to export.",
+          },
+        );
+
+        return;
+      }
+
+      const bookmarkCount =
+        backupEntries.reduce(
+          (
+            total,
+            entry,
+          ) =>
+            total +
+            entry.bookmarks.length,
+          0,
+        );
+
+      const backup:
+        AudiobookBookmarkLibraryBackupV1 = {
+          schema:
+            AUDIOBOOK_BOOKMARK_LIBRARY_BACKUP_SCHEMA,
+          version:
+            AUDIOBOOK_BOOKMARK_LIBRARY_BACKUP_VERSION,
+          exportedAt:
+            new Date().toISOString(),
+          audiobooks:
+            backupEntries,
+        };
+
+      const blob =
+        new Blob(
+          [
+            `${JSON.stringify(
+              backup,
+              null,
+              2,
+            )}
+`,
+          ],
+          {
+            type:
+              "application/json;charset=utf-8",
+          },
+        );
+
+      const objectUrl =
+        URL.createObjectURL(
+          blob,
+        );
+
+      const link =
+        document.createElement(
+          "a",
+        );
+
+      link.href =
+        objectUrl;
+
+      link.download =
+        `openbook-bookmark-library-${
+          new Date()
+            .toISOString()
+            .slice(
+              0,
+              10,
+            )
+        }.json`;
+
+      document.body.appendChild(
+        link,
+      );
+
+      link.click();
+      link.remove();
+
+      window.setTimeout(
+        () => {
+          URL.revokeObjectURL(
+            objectUrl,
+          );
+        },
+        0,
+      );
+
+      setLibraryBookmarkBackupFeedback(
+        {
+          kind: "success",
+          message:
+            `Exported ${bookmarkCount} ${
+              bookmarkCount === 1
+                ? "bookmark"
+                : "bookmarks"
+            } from ${backupEntries.length} ${
+              backupEntries.length === 1
+                ? "audiobook"
+                : "audiobooks"
+            }.`,
+        },
+      );
+    } catch {
+      setLibraryBookmarkBackupFeedback(
+        {
+          kind: "error",
+          message:
+            "Could not export the bookmark library backup.",
+        },
+      );
+    }
+  }
+
+
+  async function handleImportAudiobookBookmarkLibrary(
+    event: ChangeEvent<HTMLInputElement>,
+  ): Promise<void> {
+    const input =
+      event.currentTarget;
+
+    const file =
+      input.files?.[0];
+
+    input.value =
+      "";
+
+    if (file === undefined) {
+      return;
+    }
+
+    if (
+      file.size >
+      AUDIOBOOK_BOOKMARK_LIBRARY_IMPORT_MAX_BYTES
+    ) {
+      setLibraryBookmarkBackupFeedback(
+        {
+          kind: "error",
+          message:
+            "Bookmark library backup is too large. The maximum import size is 5 MB.",
+        },
+      );
+
+      return;
+    }
+
+    try {
+      const sourceText =
+        await file.text();
+
+      let parsedValue:
+        unknown;
+
+      try {
+        parsedValue =
+          JSON.parse(
+            sourceText,
+          );
+      } catch {
+        throw new Error(
+          "The selected file does not contain valid JSON.",
+        );
+      }
+
+      const backup =
+        parseAudiobookBookmarkLibraryBackup(
+          parsedValue,
+        );
+
+      if (
+        backup.audiobooks.length === 0
+      ) {
+        setLibraryBookmarkBackupFeedback(
+          {
+            kind: "info",
+            message:
+              "The bookmark library backup contains no audiobooks.",
+          },
+        );
+
+        return;
+      }
+
+      const jobsById =
+        new Map(
+          jobs.map(
+            (job) => [
+              job.id,
+              job,
+            ],
+          ),
+        );
+
+      let importedCount =
+        0;
+
+      let duplicateCount =
+        0;
+
+      let limitSkippedCount =
+        0;
+
+      let unmatchedAudiobookCount =
+        0;
+
+      let affectedAudiobookCount =
+        0;
+
+      for (
+        const entry
+        of backup.audiobooks
+      ) {
+        const currentJob =
+          jobsById.get(
+            entry.jobId,
+          );
+
+        if (
+          currentJob === undefined ||
+          currentJob.book_id !==
+            entry.audiobook.bookId ||
+          currentJob.book_filename !==
+            entry.audiobook.filename
+        ) {
+          unmatchedAudiobookCount +=
+            1;
+
+          continue;
+        }
+
+        const existingBookmarks =
+          readStoredAudiobookBookmarks(
+            currentJob.id,
+          );
+
+        const existingIds =
+          new Set(
+            existingBookmarks.map(
+              (bookmark) =>
+                bookmark.id,
+            ),
+          );
+
+        const importedIds =
+          new Set<string>();
+
+        const availableSlots =
+          Math.max(
+            0,
+            AUDIOBOOK_BOOKMARK_LIMIT -
+              existingBookmarks.length,
+          );
+
+        const acceptedBookmarks:
+          AudiobookBookmark[] = [];
+
+        for (
+          const bookmark
+          of entry.bookmarks
+        ) {
+          if (
+            existingIds.has(
+              bookmark.id,
+            ) ||
+            importedIds.has(
+              bookmark.id,
+            )
+          ) {
+            duplicateCount +=
+              1;
+
+            continue;
+          }
+
+          importedIds.add(
+            bookmark.id,
+          );
+
+          if (
+            acceptedBookmarks.length >=
+            availableSlots
+          ) {
+            limitSkippedCount +=
+              1;
+
+            continue;
+          }
+
+          acceptedBookmarks.push(
+            bookmark,
+          );
+        }
+
+        if (
+          acceptedBookmarks.length === 0
+        ) {
+          continue;
+        }
+
+        storeAudiobookBookmarks(
+          currentJob.id,
+          [
+            ...existingBookmarks,
+            ...acceptedBookmarks,
+          ],
+        );
+
+        importedCount +=
+          acceptedBookmarks.length;
+
+        affectedAudiobookCount +=
+          1;
+      }
+
+      const details:
+        string[] = [
+          `${importedCount} ${
+            importedCount === 1
+              ? "bookmark"
+              : "bookmarks"
+          } imported`,
+          `${affectedAudiobookCount} ${
+            affectedAudiobookCount === 1
+              ? "audiobook"
+              : "audiobooks"
+          } updated`,
+        ];
+
+      if (
+        duplicateCount > 0
+      ) {
+        details.push(
+          `${duplicateCount} ${
+            duplicateCount === 1
+              ? "duplicate"
+              : "duplicates"
+          } skipped`,
+        );
+      }
+
+      if (
+        limitSkippedCount > 0
+      ) {
+        details.push(
+          `${limitSkippedCount} skipped at the ${AUDIOBOOK_BOOKMARK_LIMIT}-bookmark limit`,
+        );
+      }
+
+      if (
+        unmatchedAudiobookCount > 0
+      ) {
+        details.push(
+          `${unmatchedAudiobookCount} unmatched ${
+            unmatchedAudiobookCount === 1
+              ? "audiobook"
+              : "audiobooks"
+          } skipped`,
+        );
+      }
+
+      setLibraryBookmarkBackupFeedback(
+        {
+          kind:
+            importedCount > 0
+              ? "success"
+              : "info",
+          message:
+            `${details.join(
+              " · ",
+            )}.`,
+        },
+      );
+    } catch (error) {
+      setLibraryBookmarkBackupFeedback(
+        {
+          kind: "error",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Could not import the bookmark library backup.",
+        },
+      );
+    }
+  }
 
 
   function clearJobLibraryControls(): void {
@@ -2763,6 +3210,89 @@ export default function AudiobooksPage() {
               </span>
             </div>
 
+            <div className="mt-5 rounded-xl border border-cyan-500/20 bg-slate-950/50 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="max-w-2xl">
+                  <p className="text-sm font-semibold text-slate-200">
+                    Bookmark library backup
+                  </p>
+
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    Export bookmarks from every audiobook in this
+                    library to one JSON file, or merge a previous
+                    library backup. Imports match audiobook job,
+                    book, and source filename before restoring.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-cyan-400 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-40"
+                    disabled={
+                      loading
+                    }
+                    onClick={
+                      handleExportAudiobookBookmarkLibrary
+                    }
+                    type="button"
+                  >
+                    Export library bookmarks
+                  </button>
+
+                  <button
+                    className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-cyan-400 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-40"
+                    disabled={
+                      loading
+                    }
+                    onClick={() =>
+                      libraryBookmarkImportInputRef.current?.click()
+                    }
+                    type="button"
+                  >
+                    Import library bookmarks
+                  </button>
+
+                  <input
+                    accept=".json,application/json"
+                    aria-label="Import audiobook bookmark library backup"
+                    className="hidden"
+                    onChange={
+                      handleImportAudiobookBookmarkLibrary
+                    }
+                    ref={
+                      libraryBookmarkImportInputRef
+                    }
+                    type="file"
+                  />
+                </div>
+              </div>
+
+              {libraryBookmarkBackupFeedback !== null && (
+                <p
+                  aria-live="polite"
+                  className={`mt-3 rounded-lg border px-3 py-2 text-xs leading-5 ${
+                    libraryBookmarkBackupFeedback.kind ===
+                    "error"
+                      ? "border-rose-500/40 bg-rose-500/10 text-rose-200"
+                      : libraryBookmarkBackupFeedback.kind ===
+                          "success"
+                        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                        : "border-slate-700 bg-slate-900/60 text-slate-300"
+                  }`}
+                  role={
+                    libraryBookmarkBackupFeedback.kind ===
+                    "error"
+                      ? "alert"
+                      : "status"
+                  }
+                >
+                  {
+                    libraryBookmarkBackupFeedback.message
+                  }
+                </p>
+              )}
+            </div>
+
             {jobs.length === 0 && (
               <p className="mt-5 text-slate-400">
                 Generated audiobooks from every book will appear here.
@@ -3659,6 +4189,12 @@ const AUDIOBOOK_BOOKMARK_BACKUP_VERSION =
   1;
 const AUDIOBOOK_BOOKMARK_IMPORT_MAX_BYTES =
   1_000_000;
+const AUDIOBOOK_BOOKMARK_LIBRARY_BACKUP_SCHEMA =
+  "openbook-audiobook-bookmark-library";
+const AUDIOBOOK_BOOKMARK_LIBRARY_BACKUP_VERSION =
+  1;
+const AUDIOBOOK_BOOKMARK_LIBRARY_IMPORT_MAX_BYTES =
+  5_000_000;
 const AUDIOBOOK_BOOKMARK_LIMIT =
   50;
 const AUDIOBOOK_BOOKMARK_NAME_MAX_LENGTH =
@@ -3725,6 +4261,27 @@ interface AudiobookBookmarkBackupV1 {
     author: string | null;
   };
   bookmarks: AudiobookBookmark[];
+}
+
+
+interface AudiobookBookmarkLibraryBackupEntryV1 {
+  jobId: number;
+  audiobook: {
+    bookId: number;
+    filename: string;
+    title: string;
+    author: string | null;
+    format: NowPlayingFormat | null;
+  };
+  bookmarks: AudiobookBookmark[];
+}
+
+
+interface AudiobookBookmarkLibraryBackupV1 {
+  schema: typeof AUDIOBOOK_BOOKMARK_LIBRARY_BACKUP_SCHEMA;
+  version: typeof AUDIOBOOK_BOOKMARK_LIBRARY_BACKUP_VERSION;
+  exportedAt: string;
+  audiobooks: AudiobookBookmarkLibraryBackupEntryV1[];
 }
 
 
@@ -4134,6 +4691,262 @@ function parseAudiobookBookmarkBackup(
     bookmarks:
       normalizedBookmarks,
   };
+}
+
+
+function parseAudiobookBookmarkLibraryBackup(
+  value: unknown,
+): AudiobookBookmarkLibraryBackupV1 {
+  if (
+    typeof value !== "object" ||
+    value === null
+  ) {
+    throw new Error(
+      "This file is not a valid OpenBook bookmark library backup.",
+    );
+  }
+
+  const record =
+    value as Record<
+      string,
+      unknown
+    >;
+
+  if (
+    record.schema !==
+    AUDIOBOOK_BOOKMARK_LIBRARY_BACKUP_SCHEMA
+  ) {
+    throw new Error(
+      "This file is not an OpenBook bookmark library backup.",
+    );
+  }
+
+  if (
+    record.version !==
+    AUDIOBOOK_BOOKMARK_LIBRARY_BACKUP_VERSION
+  ) {
+    throw new Error(
+      "This bookmark library backup version is not supported.",
+    );
+  }
+
+  if (
+    typeof record.exportedAt !==
+      "string" ||
+    Number.isNaN(
+      Date.parse(
+        record.exportedAt,
+      ),
+    )
+  ) {
+    throw new Error(
+      "The bookmark library backup has an invalid export timestamp.",
+    );
+  }
+
+  if (!Array.isArray(record.audiobooks)) {
+    throw new Error(
+      "The bookmark library backup does not contain an audiobook list.",
+    );
+  }
+
+  const seenJobIds =
+    new Set<number>();
+
+  const audiobooks:
+    AudiobookBookmarkLibraryBackupEntryV1[] = [];
+
+  for (
+    const candidate
+    of record.audiobooks
+  ) {
+    if (
+      typeof candidate !==
+        "object" ||
+      candidate === null
+    ) {
+      throw new Error(
+        "The bookmark library backup contains an invalid audiobook entry.",
+      );
+    }
+
+    const entry =
+      candidate as Record<
+        string,
+        unknown
+      >;
+
+    const jobId =
+      Number(
+        entry.jobId,
+      );
+
+    if (
+      !Number.isSafeInteger(
+        jobId,
+      ) ||
+      jobId <= 0
+    ) {
+      throw new Error(
+        "The bookmark library backup contains an invalid audiobook job ID.",
+      );
+    }
+
+    if (
+      seenJobIds.has(
+        jobId,
+      )
+    ) {
+      throw new Error(
+        "The bookmark library backup contains a duplicate audiobook job entry.",
+      );
+    }
+
+    seenJobIds.add(
+      jobId,
+    );
+
+    if (
+      typeof entry.audiobook !==
+        "object" ||
+      entry.audiobook === null
+    ) {
+      throw new Error(
+        "The bookmark library backup is missing audiobook metadata.",
+      );
+    }
+
+    const audiobook =
+      entry.audiobook as Record<
+        string,
+        unknown
+      >;
+
+    const bookId =
+      Number(
+        audiobook.bookId,
+      );
+
+    if (
+      !Number.isSafeInteger(
+        bookId,
+      ) ||
+      bookId <= 0 ||
+      typeof audiobook.filename !==
+        "string" ||
+      audiobook.filename.trim() === "" ||
+      typeof audiobook.title !==
+        "string" ||
+      audiobook.title.trim() === "" ||
+      (
+        audiobook.author !== null &&
+        typeof audiobook.author !==
+          "string"
+      ) ||
+      (
+        audiobook.format !== null &&
+        audiobook.format !== "WAV" &&
+        audiobook.format !== "MP3" &&
+        audiobook.format !== "M4B"
+      )
+    ) {
+      throw new Error(
+        "The bookmark library backup contains invalid audiobook metadata.",
+      );
+    }
+
+    if (!Array.isArray(entry.bookmarks)) {
+      throw new Error(
+        "The bookmark library backup contains an invalid bookmark list.",
+      );
+    }
+
+    if (
+      entry.bookmarks.length >
+      AUDIOBOOK_BOOKMARK_LIMIT
+    ) {
+      throw new Error(
+        `An audiobook in the backup contains more than ${AUDIOBOOK_BOOKMARK_LIMIT} bookmarks.`,
+      );
+    }
+
+    const normalizedBookmarks =
+      normalizeAudiobookBookmarks(
+        entry.bookmarks,
+      );
+
+    if (
+      normalizedBookmarks.length !==
+      entry.bookmarks.length
+    ) {
+      throw new Error(
+        "The bookmark library backup contains one or more invalid bookmark records.",
+      );
+    }
+
+    audiobooks.push(
+      {
+        jobId,
+        audiobook: {
+          bookId,
+          filename:
+            audiobook.filename,
+          title:
+            audiobook.title
+              .trim()
+              .slice(
+                0,
+                500,
+              ),
+          author:
+            typeof audiobook.author ===
+              "string"
+              ? audiobook.author
+                  .trim()
+                  .slice(
+                    0,
+                    300,
+                  ) || null
+              : null,
+          format:
+            audiobook.format as
+              | NowPlayingFormat
+              | null,
+        },
+        bookmarks:
+          normalizedBookmarks,
+      },
+    );
+  }
+
+  return {
+    schema:
+      AUDIOBOOK_BOOKMARK_LIBRARY_BACKUP_SCHEMA,
+    version:
+      AUDIOBOOK_BOOKMARK_LIBRARY_BACKUP_VERSION,
+    exportedAt:
+      record.exportedAt,
+    audiobooks,
+  };
+}
+
+
+function getAudiobookJobBookmarkBackupFormat(
+  job: AudiobookJob,
+): NowPlayingFormat | null {
+  switch (job.output_format) {
+    case "wav":
+      return "WAV";
+
+    case "mp3":
+      return "MP3";
+
+    case "m4b":
+      return "M4B";
+
+    default:
+      return null;
+  }
 }
 
 
