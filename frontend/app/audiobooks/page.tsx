@@ -3740,32 +3740,48 @@ export default function AudiobooksPage() {
                     )}
                   </div>
 
-                  <div className="mt-4 flex flex-wrap justify-end gap-2">
-                    <button
-                      className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-                      disabled={loading}
-                      onClick={
-                        handleCancelAudiobookBookmarkLibraryImport
-                      }
-                      type="button"
-                    >
-                      Cancel
-                    </button>
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-xs text-slate-400">
+                      {libraryBookmarkImportSelectedJobIds.size.toLocaleString()}{" "}
+                      {libraryBookmarkImportSelectedJobIds.size === 1
+                        ? "audiobook"
+                        : "audiobooks"}{" "}
+                      selected ·{" "}
+                      {libraryBookmarkImportSelectedTotals.incomingBookmarkCount.toLocaleString()}{" "}
+                      {libraryBookmarkImportSelectedTotals.incomingBookmarkCount ===
+                      1
+                        ? "bookmark"
+                        : "bookmarks"}{" "}
+                      selected
+                    </p>
 
-                    <button
-                      className="rounded-lg bg-cyan-400 px-3 py-2 text-xs font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
-                      disabled={
-                        loading ||
-                        libraryBookmarkImportSelectedJobIds.size ===
-                          0
-                      }
-                      onClick={
-                        handleConfirmAudiobookBookmarkLibraryImport
-                      }
-                      type="button"
-                    >
-                      Import now
-                    </button>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <button
+                        className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                        disabled={loading}
+                        onClick={
+                          handleCancelAudiobookBookmarkLibraryImport
+                        }
+                        type="button"
+                      >
+                        Cancel
+                      </button>
+
+                      <button
+                        className="rounded-lg bg-cyan-400 px-3 py-2 text-xs font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
+                        disabled={
+                          loading ||
+                          libraryBookmarkImportSelectedJobIds.size ===
+                            0
+                        }
+                        onClick={
+                          handleConfirmAudiobookBookmarkLibraryImport
+                        }
+                        type="button"
+                      >
+                        Import now
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
