@@ -577,6 +577,12 @@ export default function AudiobooksPage() {
   ] = useState<AudiobookBookmarkImportFeedback | null>(
     null,
   );
+  const [
+    libraryBookmarkImportPreview,
+    setLibraryBookmarkImportPreview,
+  ] = useState<AudiobookBookmarkLibraryImportPreview | null>(
+    null,
+  );
 
 
   useEffect(() => {
@@ -1182,6 +1188,10 @@ export default function AudiobooksPage() {
       file.size >
       AUDIOBOOK_BOOKMARK_LIBRARY_IMPORT_MAX_BYTES
     ) {
+      setLibraryBookmarkImportPreview(
+        null,
+      );
+
       setLibraryBookmarkBackupFeedback(
         {
           kind: "error",
@@ -1219,6 +1229,10 @@ export default function AudiobooksPage() {
       if (
         backup.audiobooks.length === 0
       ) {
+        setLibraryBookmarkImportPreview(
+          null,
+        );
+
         setLibraryBookmarkBackupFeedback(
           {
             kind: "info",
@@ -1230,157 +1244,112 @@ export default function AudiobooksPage() {
         return;
       }
 
-      const jobsById =
-        new Map(
-          jobs.map(
-            (job) => [
-              job.id,
-              job,
-            ],
-          ),
+      const plan =
+        buildAudiobookBookmarkLibraryImportPlan(
+          backup,
+          jobs,
         );
 
-      let importedCount =
-        0;
+      setLibraryBookmarkImportPreview(
+        {
+          fileName:
+            file.name,
+          backup,
+          plan,
+        },
+      );
 
-      let duplicateCount =
-        0;
+      setLibraryBookmarkBackupFeedback(
+        {
+          kind: "info",
+          message:
+            "Review the import preview below. No bookmarks have been changed yet.",
+        },
+      );
+    } catch (error) {
+      setLibraryBookmarkImportPreview(
+        null,
+      );
 
-      let limitSkippedCount =
-        0;
+      setLibraryBookmarkBackupFeedback(
+        {
+          kind: "error",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Could not preview the bookmark library backup.",
+        },
+      );
+    }
+  }
 
-      let unmatchedAudiobookCount =
-        0;
 
-      let affectedAudiobookCount =
-        0;
+  function handleCancelAudiobookBookmarkLibraryImport(): void {
+    setLibraryBookmarkImportPreview(
+      null,
+    );
+
+    setLibraryBookmarkBackupFeedback(
+      {
+        kind: "info",
+        message:
+          "Bookmark library import cancelled. No bookmarks were changed.",
+      },
+    );
+  }
+
+
+  function handleConfirmAudiobookBookmarkLibraryImport(): void {
+    if (
+      libraryBookmarkImportPreview === null
+    ) {
+      return;
+    }
+
+    try {
+      const plan =
+        buildAudiobookBookmarkLibraryImportPlan(
+          libraryBookmarkImportPreview.backup,
+          jobs,
+        );
 
       for (
         const entry
-        of backup.audiobooks
+        of plan.entries
       ) {
-        const currentJob =
-          jobsById.get(
-            entry.jobId,
-          );
-
         if (
-          currentJob === undefined ||
-          currentJob.book_id !==
-            entry.audiobook.bookId ||
-          currentJob.book_filename !==
-            entry.audiobook.filename
-        ) {
-          unmatchedAudiobookCount +=
-            1;
-
-          continue;
-        }
-
-        const existingBookmarks =
-          readStoredAudiobookBookmarks(
-            currentJob.id,
-          );
-
-        const existingIds =
-          new Set(
-            existingBookmarks.map(
-              (bookmark) =>
-                bookmark.id,
-            ),
-          );
-
-        const importedIds =
-          new Set<string>();
-
-        const availableSlots =
-          Math.max(
-            0,
-            AUDIOBOOK_BOOKMARK_LIMIT -
-              existingBookmarks.length,
-          );
-
-        const acceptedBookmarks:
-          AudiobookBookmark[] = [];
-
-        for (
-          const bookmark
-          of entry.bookmarks
-        ) {
-          if (
-            existingIds.has(
-              bookmark.id,
-            ) ||
-            importedIds.has(
-              bookmark.id,
-            )
-          ) {
-            duplicateCount +=
-              1;
-
-            continue;
-          }
-
-          importedIds.add(
-            bookmark.id,
-          );
-
-          if (
-            acceptedBookmarks.length >=
-            availableSlots
-          ) {
-            limitSkippedCount +=
-              1;
-
-            continue;
-          }
-
-          acceptedBookmarks.push(
-            bookmark,
-          );
-        }
-
-        if (
-          acceptedBookmarks.length === 0
+          !entry.matched ||
+          entry.mergedBookmarks === null
         ) {
           continue;
         }
 
         storeAudiobookBookmarks(
-          currentJob.id,
-          [
-            ...existingBookmarks,
-            ...acceptedBookmarks,
-          ],
+          entry.jobId,
+          entry.mergedBookmarks,
         );
-
-        importedCount +=
-          acceptedBookmarks.length;
-
-        affectedAudiobookCount +=
-          1;
       }
 
       const details:
         string[] = [
-          `${importedCount} ${
-            importedCount === 1
+          `${plan.importableBookmarkCount} ${
+            plan.importableBookmarkCount === 1
               ? "bookmark"
               : "bookmarks"
           } imported`,
-          `${affectedAudiobookCount} ${
-            affectedAudiobookCount === 1
+          `${plan.affectedAudiobookCount} ${
+            plan.affectedAudiobookCount === 1
               ? "audiobook"
               : "audiobooks"
           } updated`,
         ];
 
       if (
-        duplicateCount > 0
+        plan.duplicateBookmarkCount > 0
       ) {
         details.push(
-          `${duplicateCount} ${
-            duplicateCount === 1
+          `${plan.duplicateBookmarkCount} ${
+            plan.duplicateBookmarkCount === 1
               ? "duplicate"
               : "duplicates"
           } skipped`,
@@ -1388,29 +1357,33 @@ export default function AudiobooksPage() {
       }
 
       if (
-        limitSkippedCount > 0
+        plan.limitSkippedBookmarkCount > 0
       ) {
         details.push(
-          `${limitSkippedCount} skipped at the ${AUDIOBOOK_BOOKMARK_LIMIT}-bookmark limit`,
+          `${plan.limitSkippedBookmarkCount} skipped at the ${AUDIOBOOK_BOOKMARK_LIMIT}-bookmark limit`,
         );
       }
 
       if (
-        unmatchedAudiobookCount > 0
+        plan.unmatchedAudiobookCount > 0
       ) {
         details.push(
-          `${unmatchedAudiobookCount} unmatched ${
-            unmatchedAudiobookCount === 1
+          `${plan.unmatchedAudiobookCount} unmatched ${
+            plan.unmatchedAudiobookCount === 1
               ? "audiobook"
               : "audiobooks"
           } skipped`,
         );
       }
 
+      setLibraryBookmarkImportPreview(
+        null,
+      );
+
       setLibraryBookmarkBackupFeedback(
         {
           kind:
-            importedCount > 0
+            plan.importableBookmarkCount > 0
               ? "success"
               : "info",
           message:
@@ -3291,6 +3264,163 @@ export default function AudiobooksPage() {
                   }
                 </p>
               )}
+              {libraryBookmarkImportPreview !== null && (
+                <div className="mt-4 rounded-xl border border-cyan-500/30 bg-cyan-500/5 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-cyan-100">
+                        Import preview
+                      </p>
+
+                      <p className="mt-1 break-all text-xs text-slate-400">
+                        {libraryBookmarkImportPreview.fileName}
+                      </p>
+
+                      <p className="mt-1 text-xs text-slate-500">
+                        Exported{" "}
+                        {new Date(
+                          libraryBookmarkImportPreview.backup.exportedAt,
+                        ).toLocaleString()}{" "}
+                        ·{" "}
+                        {libraryBookmarkImportPreview.backup.audiobooks.length.toLocaleString()}{" "}
+                        {libraryBookmarkImportPreview.backup.audiobooks.length ===
+                        1
+                          ? "audiobook collection"
+                          : "audiobook collections"}
+                      </p>
+                    </div>
+
+                    <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1 text-xs font-semibold text-cyan-200">
+                      No changes made yet
+                    </span>
+                  </div>
+
+                  <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3">
+                      <p className="text-xs text-slate-500">
+                        Incoming
+                      </p>
+                      <p className="mt-1 text-lg font-semibold text-white">
+                        {libraryBookmarkImportPreview.plan.incomingBookmarkCount.toLocaleString()}
+                      </p>
+                    </div>
+
+                    <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
+                      <p className="text-xs text-emerald-300">
+                        Importable
+                      </p>
+                      <p className="mt-1 text-lg font-semibold text-emerald-100">
+                        {libraryBookmarkImportPreview.plan.importableBookmarkCount.toLocaleString()}
+                      </p>
+                    </div>
+
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3">
+                      <p className="text-xs text-slate-500">
+                        Duplicates
+                      </p>
+                      <p className="mt-1 text-lg font-semibold text-white">
+                        {libraryBookmarkImportPreview.plan.duplicateBookmarkCount.toLocaleString()}
+                      </p>
+                    </div>
+
+                    <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
+                      <p className="text-xs text-amber-300">
+                        At limit
+                      </p>
+                      <p className="mt-1 text-lg font-semibold text-amber-100">
+                        {libraryBookmarkImportPreview.plan.limitSkippedBookmarkCount.toLocaleString()}
+                      </p>
+                    </div>
+
+                    <div className="rounded-lg border border-rose-500/20 bg-rose-500/5 p-3">
+                      <p className="text-xs text-rose-300">
+                        Unmatched
+                      </p>
+                      <p className="mt-1 text-lg font-semibold text-rose-100">
+                        {libraryBookmarkImportPreview.plan.unmatchedBookmarkCount.toLocaleString()}
+                      </p>
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        {libraryBookmarkImportPreview.plan.unmatchedAudiobookCount.toLocaleString()}{" "}
+                        {libraryBookmarkImportPreview.plan.unmatchedAudiobookCount ===
+                        1
+                          ? "audiobook"
+                          : "audiobooks"}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 max-h-80 space-y-2 overflow-y-auto pr-1">
+                    {libraryBookmarkImportPreview.plan.entries.map(
+                      (entry) => (
+                        <div
+                          className={`rounded-lg border p-3 ${
+                            entry.matched
+                              ? "border-slate-800 bg-slate-950/60"
+                              : "border-rose-500/30 bg-rose-500/5"
+                          }`}
+                          key={entry.jobId}
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-semibold text-slate-200">
+                                {entry.title}
+                              </p>
+
+                              <p className="mt-1 break-all text-xs text-slate-500">
+                                Job {entry.jobId} · {entry.filename}
+                              </p>
+                            </div>
+
+                            {!entry.matched && (
+                              <span className="rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-1 text-[11px] font-semibold text-rose-200">
+                                Unmatched
+                              </span>
+                            )}
+                          </div>
+
+                          <p className="mt-2 text-xs leading-5 text-slate-400">
+                            Incoming{" "}
+                            {entry.incomingCount.toLocaleString()}{" "}
+                            · Importable{" "}
+                            {entry.importableCount.toLocaleString()}{" "}
+                            · Duplicates{" "}
+                            {entry.duplicateCount.toLocaleString()}{" "}
+                            · At limit{" "}
+                            {entry.limitSkippedCount.toLocaleString()}{" "}
+                            · Unmatched{" "}
+                            {entry.unmatchedCount.toLocaleString()}
+                          </p>
+                        </div>
+                      ),
+                    )}
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap justify-end gap-2">
+                    <button
+                      className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                      disabled={loading}
+                      onClick={
+                        handleCancelAudiobookBookmarkLibraryImport
+                      }
+                      type="button"
+                    >
+                      Cancel
+                    </button>
+
+                    <button
+                      className="rounded-lg bg-cyan-400 px-3 py-2 text-xs font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
+                      disabled={loading}
+                      onClick={
+                        handleConfirmAudiobookBookmarkLibraryImport
+                      }
+                      type="button"
+                    >
+                      Import now
+                    </button>
+                  </div>
+                </div>
+              )}
+
             </div>
 
             {jobs.length === 0 && (
@@ -4288,6 +4418,264 @@ interface AudiobookBookmarkLibraryBackupV1 {
 interface AudiobookBookmarkImportFeedback {
   kind: "success" | "error" | "info";
   message: string;
+}
+
+
+interface AudiobookBookmarkLibraryImportPlanEntry {
+  jobId: number;
+  title: string;
+  filename: string;
+  matched: boolean;
+  incomingCount: number;
+  importableCount: number;
+  duplicateCount: number;
+  limitSkippedCount: number;
+  unmatchedCount: number;
+  mergedBookmarks: AudiobookBookmark[] | null;
+}
+
+
+interface AudiobookBookmarkLibraryImportPlan {
+  entries: AudiobookBookmarkLibraryImportPlanEntry[];
+  incomingBookmarkCount: number;
+  importableBookmarkCount: number;
+  duplicateBookmarkCount: number;
+  limitSkippedBookmarkCount: number;
+  unmatchedBookmarkCount: number;
+  unmatchedAudiobookCount: number;
+  affectedAudiobookCount: number;
+}
+
+
+interface AudiobookBookmarkLibraryImportPreview {
+  fileName: string;
+  backup: AudiobookBookmarkLibraryBackupV1;
+  plan: AudiobookBookmarkLibraryImportPlan;
+}
+
+
+function buildAudiobookBookmarkLibraryImportPlan(
+  backup: AudiobookBookmarkLibraryBackupV1,
+  jobs: AudiobookJob[],
+): AudiobookBookmarkLibraryImportPlan {
+  const jobsById =
+    new Map(
+      jobs.map(
+        (job) => [
+          job.id,
+          job,
+        ],
+      ),
+    );
+
+  const entries:
+    AudiobookBookmarkLibraryImportPlanEntry[] = [];
+
+  let incomingBookmarkCount =
+    0;
+
+  let importableBookmarkCount =
+    0;
+
+  let duplicateBookmarkCount =
+    0;
+
+  let limitSkippedBookmarkCount =
+    0;
+
+  let unmatchedBookmarkCount =
+    0;
+
+  let unmatchedAudiobookCount =
+    0;
+
+  let affectedAudiobookCount =
+    0;
+
+  for (
+    const entry
+    of backup.audiobooks
+  ) {
+    const incomingCount =
+      entry.bookmarks.length;
+
+    incomingBookmarkCount +=
+      incomingCount;
+
+    const currentJob =
+      jobsById.get(
+        entry.jobId,
+      );
+
+    const matched =
+      currentJob !== undefined &&
+      currentJob.book_id ===
+        entry.audiobook.bookId &&
+      currentJob.book_filename ===
+        entry.audiobook.filename;
+
+    if (
+      !matched ||
+      currentJob === undefined
+    ) {
+      unmatchedAudiobookCount +=
+        1;
+
+      unmatchedBookmarkCount +=
+        incomingCount;
+
+      entries.push(
+        {
+          jobId:
+            entry.jobId,
+          title:
+            entry.audiobook.title,
+          filename:
+            entry.audiobook.filename,
+          matched:
+            false,
+          incomingCount,
+          importableCount:
+            0,
+          duplicateCount:
+            0,
+          limitSkippedCount:
+            0,
+          unmatchedCount:
+            incomingCount,
+          mergedBookmarks:
+            null,
+        },
+      );
+
+      continue;
+    }
+
+    const existingBookmarks =
+      readStoredAudiobookBookmarks(
+        currentJob.id,
+      );
+
+    const existingIds =
+      new Set(
+        existingBookmarks.map(
+          (bookmark) =>
+            bookmark.id,
+        ),
+      );
+
+    const importedIds =
+      new Set<string>();
+
+    const availableSlots =
+      Math.max(
+        0,
+        AUDIOBOOK_BOOKMARK_LIMIT -
+          existingBookmarks.length,
+      );
+
+    const acceptedBookmarks:
+      AudiobookBookmark[] = [];
+
+    let duplicateCount =
+      0;
+
+    let limitSkippedCount =
+      0;
+
+    for (
+      const bookmark
+      of entry.bookmarks
+    ) {
+      if (
+        existingIds.has(
+          bookmark.id,
+        ) ||
+        importedIds.has(
+          bookmark.id,
+        )
+      ) {
+        duplicateCount +=
+          1;
+
+        continue;
+      }
+
+      importedIds.add(
+        bookmark.id,
+      );
+
+      if (
+        acceptedBookmarks.length >=
+        availableSlots
+      ) {
+        limitSkippedCount +=
+          1;
+
+        continue;
+      }
+
+      acceptedBookmarks.push(
+        bookmark,
+      );
+    }
+
+    const importableCount =
+      acceptedBookmarks.length;
+
+    if (
+      importableCount > 0
+    ) {
+      affectedAudiobookCount +=
+        1;
+    }
+
+    importableBookmarkCount +=
+      importableCount;
+
+    duplicateBookmarkCount +=
+      duplicateCount;
+
+    limitSkippedBookmarkCount +=
+      limitSkippedCount;
+
+    entries.push(
+      {
+        jobId:
+          currentJob.id,
+        title:
+          currentJob.book_title,
+        filename:
+          currentJob.book_filename,
+        matched:
+          true,
+        incomingCount,
+        importableCount,
+        duplicateCount,
+        limitSkippedCount,
+        unmatchedCount:
+          0,
+        mergedBookmarks:
+          importableCount > 0
+            ? [
+                ...existingBookmarks,
+                ...acceptedBookmarks,
+              ]
+            : null,
+      },
+    );
+  }
+
+  return {
+    entries,
+    incomingBookmarkCount,
+    importableBookmarkCount,
+    duplicateBookmarkCount,
+    limitSkippedBookmarkCount,
+    unmatchedBookmarkCount,
+    unmatchedAudiobookCount,
+    affectedAudiobookCount,
+  };
 }
 
 
