@@ -1391,6 +1391,30 @@ export default function AudiobooksPage() {
   }
 
 
+  function handleSelectImportableAudiobookBookmarkLibraryMatches(): void {
+    if (
+      libraryBookmarkImportPreview === null
+    ) {
+      return;
+    }
+
+    setLibraryBookmarkImportSelectedJobIds(
+      new Set(
+        libraryBookmarkImportPreview.plan.entries
+          .filter(
+            (entry) =>
+              entry.matched &&
+              entry.importableCount > 0,
+          )
+          .map(
+            (entry) =>
+              entry.jobId,
+          ),
+      ),
+    );
+  }
+
+
   function handleClearAudiobookBookmarkLibrarySelection(): void {
     setLibraryBookmarkImportSelectedJobIds(
       new Set(),
@@ -3528,6 +3552,16 @@ export default function AudiobooksPage() {
                         type="button"
                       >
                         Select all matched
+                      </button>
+
+                      <button
+                        className="rounded-lg border border-emerald-500/30 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-200 transition hover:border-emerald-400 hover:text-emerald-100"
+                        onClick={
+                          handleSelectImportableAudiobookBookmarkLibraryMatches
+                        }
+                        type="button"
+                      >
+                        Select only importable
                       </button>
 
                       <button
