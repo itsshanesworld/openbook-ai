@@ -590,6 +590,12 @@ export default function AudiobooksPage() {
     () => new Set(),
   );
 
+  const libraryBookmarkImportSelectedTotals =
+    summarizeSelectedAudiobookBookmarkLibraryEntries(
+      libraryBookmarkImportPreview?.plan.entries ?? [],
+      libraryBookmarkImportSelectedJobIds,
+    );
+
 
   useEffect(() => {
     setPinnedJobIds(
@@ -3536,6 +3542,56 @@ export default function AudiobooksPage() {
                     </div>
                   </div>
 
+                  <div className="mt-4 rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs font-semibold text-cyan-200">
+                        Selected totals
+                      </p>
+
+                      <p className="text-[11px] text-slate-500">
+                        Updates as audiobook selections change
+                      </p>
+                    </div>
+
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                      <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                        <p className="text-xs text-slate-500">
+                          Incoming
+                        </p>
+                        <p className="mt-1 text-lg font-semibold text-white">
+                          {libraryBookmarkImportSelectedTotals.incomingBookmarkCount.toLocaleString()}
+                        </p>
+                      </div>
+
+                      <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
+                        <p className="text-xs text-emerald-300">
+                          Importable
+                        </p>
+                        <p className="mt-1 text-lg font-semibold text-emerald-100">
+                          {libraryBookmarkImportSelectedTotals.importableBookmarkCount.toLocaleString()}
+                        </p>
+                      </div>
+
+                      <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                        <p className="text-xs text-slate-500">
+                          Duplicates
+                        </p>
+                        <p className="mt-1 text-lg font-semibold text-white">
+                          {libraryBookmarkImportSelectedTotals.duplicateBookmarkCount.toLocaleString()}
+                        </p>
+                      </div>
+
+                      <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
+                        <p className="text-xs text-amber-300">
+                          At limit
+                        </p>
+                        <p className="mt-1 text-lg font-semibold text-amber-100">
+                          {libraryBookmarkImportSelectedTotals.limitSkippedBookmarkCount.toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="mt-4 max-h-80 space-y-2 overflow-y-auto pr-1">
                     {libraryBookmarkImportPreview.plan.entries.map(
                       (entry) => (
@@ -4672,6 +4728,62 @@ interface AudiobookBookmarkLibraryImportPreview {
   fileName: string;
   backup: AudiobookBookmarkLibraryBackupV1;
   plan: AudiobookBookmarkLibraryImportPlan;
+}
+
+
+function summarizeSelectedAudiobookBookmarkLibraryEntries(
+  entries: AudiobookBookmarkLibraryImportPlanEntry[],
+  selectedJobIds: ReadonlySet<number>,
+): {
+  incomingBookmarkCount: number;
+  importableBookmarkCount: number;
+  duplicateBookmarkCount: number;
+  limitSkippedBookmarkCount: number;
+} {
+  let incomingBookmarkCount =
+    0;
+
+  let importableBookmarkCount =
+    0;
+
+  let duplicateBookmarkCount =
+    0;
+
+  let limitSkippedBookmarkCount =
+    0;
+
+  for (
+    const entry
+    of entries
+  ) {
+    if (
+      !entry.matched ||
+      !selectedJobIds.has(
+        entry.jobId,
+      )
+    ) {
+      continue;
+    }
+
+    incomingBookmarkCount +=
+      entry.incomingCount;
+
+    importableBookmarkCount +=
+      entry.importableCount;
+
+    duplicateBookmarkCount +=
+      entry.duplicateCount;
+
+    limitSkippedBookmarkCount +=
+      entry.limitSkippedCount;
+  }
+
+  return {
+    incomingBookmarkCount,
+    importableBookmarkCount,
+    duplicateBookmarkCount,
+    limitSkippedBookmarkCount,
+  };
 }
 
 
