@@ -1415,6 +1415,33 @@ export default function AudiobooksPage() {
   }
 
 
+  function handleSelectChangedAudiobookBookmarkLibraryMatches(): void {
+    if (
+      libraryBookmarkImportPreview === null
+    ) {
+      return;
+    }
+
+    setLibraryBookmarkImportSelectedJobIds(
+      new Set(
+        libraryBookmarkImportPreview.plan.entries
+          .filter(
+            (entry) =>
+              entry.matched &&
+              (
+                entry.importableCount > 0 ||
+                entry.limitSkippedCount > 0
+              ),
+          )
+          .map(
+            (entry) =>
+              entry.jobId,
+          ),
+      ),
+    );
+  }
+
+
   function handleClearAudiobookBookmarkLibrarySelection(): void {
     setLibraryBookmarkImportSelectedJobIds(
       new Set(),
@@ -3562,6 +3589,17 @@ export default function AudiobooksPage() {
                         type="button"
                       >
                         Select only importable
+                      </button>
+
+                      <button
+                        className="rounded-lg border border-cyan-500/30 px-2.5 py-1.5 text-[11px] font-semibold text-cyan-200 transition hover:border-cyan-400 hover:text-cyan-100"
+                        onClick={
+                          handleSelectChangedAudiobookBookmarkLibraryMatches
+                        }
+                        title="Select matched audiobooks whose backup contains non-duplicate bookmarks, including bookmarks blocked by the limit."
+                        type="button"
+                      >
+                        Select only with changes
                       </button>
 
                       <button
