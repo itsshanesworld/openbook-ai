@@ -3767,6 +3767,24 @@ export default function AudiobooksPage() {
                         Cancel
                       </button>
 
+                      <span
+                        className={`inline-flex items-center rounded-full border px-2.5 py-2 text-[11px] font-semibold ${
+                          libraryBookmarkImportSelectedTotals.limitSkippedBookmarkCount >
+                          0
+                            ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
+                            : libraryBookmarkImportSelectedTotals.importableBookmarkCount >
+                                0
+                              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                              : "border-slate-700 bg-slate-900/70 text-slate-400"
+                        }`}
+                        title="Blocked bookmarks are non-duplicate bookmarks that cannot be restored because the audiobook is already at the 50-bookmark limit."
+                      >
+                        {libraryBookmarkImportSelectedTotals.importableBookmarkCount.toLocaleString()}{" "}
+                        importable ·{" "}
+                        {libraryBookmarkImportSelectedTotals.limitSkippedBookmarkCount.toLocaleString()}{" "}
+                        blocked
+                      </span>
+
                       <button
                         className="rounded-lg bg-cyan-400 px-3 py-2 text-xs font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
                         disabled={
