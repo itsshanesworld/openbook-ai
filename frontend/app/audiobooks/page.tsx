@@ -220,6 +220,25 @@ type JobListeningFilter =
   | "all"
   | "continue";
 
+
+type AllBookmarksSortMode =
+  | "audiobook"
+  | "position"
+  | "newest"
+  | "oldest"
+  | "name";
+
+
+interface AllAudiobookBookmarkEntry {
+  jobId: number;
+  bookId: number;
+  bookFilename: string;
+  bookTitle: string;
+  bookAuthor: string | null;
+  bookmark: AudiobookBookmark;
+}
+
+
 interface ErrorResponse {
   detail?: string | Array<{ msg?: string }>;
 }
@@ -568,6 +587,20 @@ export default function AudiobooksPage() {
   ] = useState(0);
   const [visibleJobCount, setVisibleJobCount] =
     useState(JOB_HISTORY_PAGE_SIZE);
+  const [
+    allBookmarksSearch,
+    setAllBookmarksSearch,
+  ] = useState("");
+  const [
+    allBookmarksSortMode,
+    setAllBookmarksSortMode,
+  ] = useState<AllBookmarksSortMode>(
+    "audiobook",
+  );
+  const [
+    ,
+    setAllBookmarksRevision,
+  ] = useState(0);
 
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -698,6 +731,28 @@ export default function AudiobooksPage() {
       );
     };
   }, [refreshPlaybackLibraryState]);
+
+
+  useEffect(() => {
+    function handleAllBookmarksChanged(): void {
+      setAllBookmarksRevision(
+        (currentRevision) =>
+          currentRevision + 1,
+      );
+    }
+
+    window.addEventListener(
+      AUDIOBOOK_BOOKMARK_EVENT,
+      handleAllBookmarksChanged,
+    );
+
+    return () => {
+      window.removeEventListener(
+        AUDIOBOOK_BOOKMARK_EVENT,
+        handleAllBookmarksChanged,
+      );
+    };
+  }, []);
 
 
   function togglePinnedJob(
@@ -1012,6 +1067,131 @@ export default function AudiobooksPage() {
   const jobControlsModified =
     jobFiltersActive ||
     jobSortOrder !== "newest";
+
+  const allBookmarks:
+    AllAudiobookBookmarkEntry[] =
+      jobs.flatMap(
+        (job) =>
+          readStoredAudiobookBookmarks(
+            job.id,
+          ).map(
+            (bookmark) => ({
+              jobId:
+                job.id,
+              bookId:
+                job.book_id,
+              bookFilename:
+                job.book_filename,
+              bookTitle:
+                job.book_title,
+              bookAuthor:
+                job.book_author,
+              bookmark,
+            }),
+          ),
+      );
+
+  const normalizedAllBookmarksSearch =
+    allBookmarksSearch
+      .trim()
+      .toLocaleLowerCase();
+
+  const filteredAllBookmarks =
+    allBookmarks
+      .filter(
+        (entry) => {
+          if (
+            normalizedAllBookmarksSearch ===
+            ""
+          ) {
+            return true;
+          }
+
+          const searchableText = [
+            entry.bookTitle,
+            entry.bookAuthor ?? "",
+            entry.bookFilename,
+            entry.bookmark.name,
+            entry.bookmark.chapterTitle ?? "",
+            entry.bookmark.note ?? "",
+            ...(entry.bookmark.tags ?? []),
+          ]
+            .join(" ")
+            .toLocaleLowerCase();
+
+          return searchableText.includes(
+            normalizedAllBookmarksSearch,
+          );
+        },
+      )
+      .sort(
+        (first, second) => {
+          const compareAudiobooks =
+            first.bookTitle.localeCompare(
+              second.bookTitle,
+              undefined,
+              {
+                sensitivity:
+                  "base",
+              },
+            );
+
+          const compareNames =
+            first.bookmark.name.localeCompare(
+              second.bookmark.name,
+              undefined,
+              {
+                sensitivity:
+                  "base",
+              },
+            );
+
+          switch (
+            allBookmarksSortMode
+          ) {
+            case "position":
+              return (
+                first.bookmark.positionSeconds -
+                  second.bookmark.positionSeconds ||
+                compareAudiobooks ||
+                compareNames
+              );
+
+            case "newest":
+              return (
+                second.bookmark.createdAt -
+                  first.bookmark.createdAt ||
+                compareAudiobooks ||
+                compareNames
+              );
+
+            case "oldest":
+              return (
+                first.bookmark.createdAt -
+                  second.bookmark.createdAt ||
+                compareAudiobooks ||
+                compareNames
+              );
+
+            case "name":
+              return (
+                compareNames ||
+                compareAudiobooks ||
+                first.bookmark.positionSeconds -
+                  second.bookmark.positionSeconds
+              );
+
+            case "audiobook":
+            default:
+              return (
+                compareAudiobooks ||
+                first.bookmark.positionSeconds -
+                  second.bookmark.positionSeconds ||
+                compareNames
+              );
+          }
+        },
+      );
 
 
   function handleExportAudiobookBookmarkLibrary(): void {
@@ -1608,6 +1788,76 @@ export default function AudiobooksPage() {
         },
       );
     }
+  }
+
+
+  function handleOpenAllBookmark(
+    entry: AllAudiobookBookmarkEntry,
+  ): void {
+    const targetElementId =
+      `audiobook-job-${entry.jobId}`;
+
+    function dispatchBookmarkJump(): void {
+      window.dispatchEvent(
+        new CustomEvent<AudiobookBookmarkJumpEventDetail>(
+          AUDIOBOOK_BOOKMARK_JUMP_EVENT,
+          {
+            detail: {
+              jobId:
+                entry.jobId,
+              positionSeconds:
+                entry.bookmark.positionSeconds,
+            },
+          },
+        ),
+      );
+
+      document
+        .getElementById(
+          targetElementId,
+        )
+        ?.scrollIntoView(
+          {
+            behavior: "smooth",
+            block: "center",
+          },
+        );
+    }
+
+    if (
+      document.getElementById(
+        targetElementId,
+      ) !== null
+    ) {
+      dispatchBookmarkJump();
+      return;
+    }
+
+    clearJobLibraryControls();
+
+    setVisibleJobCount(
+      Math.max(
+        JOB_HISTORY_PAGE_SIZE,
+        jobs.length,
+      ),
+    );
+
+    window.setTimeout(
+      () => {
+        setVisibleJobCount(
+          Math.max(
+            JOB_HISTORY_PAGE_SIZE,
+            jobs.length,
+          ),
+        );
+
+        window.setTimeout(
+          dispatchBookmarkJump,
+          75,
+        );
+      },
+      0,
+    );
   }
 
 
@@ -3806,6 +4056,197 @@ export default function AudiobooksPage() {
 
             </div>
 
+            {jobs.length > 0 && (
+              <div className="mt-5 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-cyan-100">
+                      All bookmarks
+                    </h3>
+
+                    <p className="mt-1 text-xs leading-5 text-slate-400">
+                      Browse bookmarks from every audiobook in one place.
+                      Search names, audiobooks, chapters, notes, and tags,
+                      then jump directly to the saved playback position.
+                    </p>
+                  </div>
+
+                  <span className="rounded-full border border-cyan-500/20 bg-slate-950/60 px-3 py-1 text-xs text-cyan-200">
+                    {filteredAllBookmarks.length.toLocaleString()}
+                    {normalizedAllBookmarksSearch !== "" && (
+                      <>
+                        /{allBookmarks.length.toLocaleString()}
+                      </>
+                    )}{" "}
+                    {filteredAllBookmarks.length === 1
+                      ? "bookmark"
+                      : "bookmarks"}
+                  </span>
+                </div>
+
+                <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_auto]">
+                  <div>
+                    <label
+                      className="text-xs font-semibold uppercase tracking-wide text-slate-500"
+                      htmlFor="all-bookmarks-search"
+                    >
+                      Search bookmarks
+                    </label>
+
+                    <input
+                      className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400"
+                      id="all-bookmarks-search"
+                      onChange={(event) =>
+                        setAllBookmarksSearch(
+                          event.target.value,
+                        )
+                      }
+                      placeholder="Audiobook, bookmark, chapter, note, or tag"
+                      type="search"
+                      value={allBookmarksSearch}
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      className="text-xs font-semibold uppercase tracking-wide text-slate-500"
+                      htmlFor="all-bookmarks-sort"
+                    >
+                      Sort
+                    </label>
+
+                    <select
+                      className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400"
+                      id="all-bookmarks-sort"
+                      onChange={(event) =>
+                        setAllBookmarksSortMode(
+                          event.target
+                            .value as AllBookmarksSortMode,
+                        )
+                      }
+                      value={allBookmarksSortMode}
+                    >
+                      <option value="audiobook">
+                        Audiobook
+                      </option>
+                      <option value="position">
+                        Playback position
+                      </option>
+                      <option value="newest">
+                        Newest saved
+                      </option>
+                      <option value="oldest">
+                        Oldest saved
+                      </option>
+                      <option value="name">
+                        Bookmark name
+                      </option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-end">
+                    <button
+                      className="w-full rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-cyan-400 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-40"
+                      disabled={
+                        normalizedAllBookmarksSearch === ""
+                      }
+                      onClick={() =>
+                        setAllBookmarksSearch(
+                          "",
+                        )
+                      }
+                      type="button"
+                    >
+                      Clear search
+                    </button>
+                  </div>
+                </div>
+
+                {allBookmarks.length === 0 ? (
+                  <p className="mt-4 rounded-lg border border-slate-800 bg-slate-950/50 p-4 text-sm text-slate-400">
+                    No audiobook bookmarks have been saved yet.
+                  </p>
+                ) : filteredAllBookmarks.length === 0 ? (
+                  <p className="mt-4 rounded-lg border border-slate-800 bg-slate-950/50 p-4 text-sm text-slate-400">
+                    No bookmarks match this search.
+                  </p>
+                ) : (
+                  <div className="mt-4 max-h-96 space-y-2 overflow-y-auto pr-1">
+                    {filteredAllBookmarks.map(
+                      (entry) => (
+                        <button
+                          className="w-full rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-left transition hover:border-cyan-500/40 hover:bg-cyan-500/5"
+                          key={`${entry.jobId}:${entry.bookmark.id}`}
+                          onClick={() =>
+                            handleOpenAllBookmark(
+                              entry,
+                            )
+                          }
+                          title={`Jump to ${formatAllBookmarkPosition(
+                            entry.bookmark.positionSeconds,
+                          )} in ${entry.bookTitle}`}
+                          type="button"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="break-words text-sm font-semibold text-white">
+                                {entry.bookmark.name}
+                              </p>
+
+                              <p className="mt-1 break-words text-xs font-medium text-cyan-200">
+                                {entry.bookTitle}
+                                {entry.bookAuthor
+                                  ? ` · ${entry.bookAuthor}`
+                                  : ""}
+                              </p>
+                            </div>
+
+                            <span className="shrink-0 rounded-full border border-slate-700 bg-slate-900 px-2 py-1 text-xs font-semibold text-slate-200">
+                              {formatAllBookmarkPosition(
+                                entry.bookmark.positionSeconds,
+                              )}
+                            </span>
+                          </div>
+
+                          {entry.bookmark.chapterTitle && (
+                            <p className="mt-2 break-words text-xs text-violet-200">
+                              Chapter:{" "}
+                              {entry.bookmark.chapterTitle}
+                            </p>
+                          )}
+
+                          {entry.bookmark.note && (
+                            <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-slate-400">
+                              {entry.bookmark.note}
+                            </p>
+                          )}
+
+                          {(entry.bookmark.tags?.length ?? 0) > 0 && (
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              {entry.bookmark.tags?.map(
+                                (tag) => (
+                                  <span
+                                    className="rounded-full border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-300"
+                                    key={tag}
+                                  >
+                                    #{tag}
+                                  </span>
+                                ),
+                              )}
+                            </div>
+                          )}
+
+                          <p className="mt-2 text-[11px] font-semibold text-cyan-300">
+                            Jump to bookmark →
+                          </p>
+                        </button>
+                      ),
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             {jobs.length === 0 && (
               <p className="mt-5 text-slate-400">
                 Generated audiobooks from every book will appear here.
@@ -4165,6 +4606,7 @@ export default function AudiobooksPage() {
               {visibleJobs.map((job) => (
                 <article
                   className="rounded-2xl border border-slate-700 bg-slate-950 p-5"
+                  id={`audiobook-job-${job.id}`}
                   key={job.id}
                 >
                   <div className="flex flex-wrap justify-between gap-4">
@@ -4682,6 +5124,64 @@ export default function AudiobooksPage() {
   );
 }
 
+function formatAllBookmarkPosition(
+  positionSeconds: number,
+): string {
+  const safeSeconds =
+    Number.isFinite(
+      positionSeconds,
+    )
+      ? Math.max(
+          0,
+          Math.floor(
+            positionSeconds,
+          ),
+        )
+      : 0;
+
+  const hours =
+    Math.floor(
+      safeSeconds / 3600,
+    );
+
+  const minutes =
+    Math.floor(
+      (safeSeconds % 3600) / 60,
+    );
+
+  const seconds =
+    safeSeconds % 60;
+
+  if (hours > 0) {
+    return [
+      hours,
+      minutes
+        .toString()
+        .padStart(
+          2,
+          "0",
+        ),
+      seconds
+        .toString()
+        .padStart(
+          2,
+          "0",
+        ),
+    ].join(":");
+  }
+
+  return [
+    minutes,
+    seconds
+      .toString()
+      .padStart(
+        2,
+        "0",
+      ),
+  ].join(":");
+}
+
+
 const PLAYBACK_STORAGE_PREFIX =
   "openbook-audiobook-playback-v1";
 const PLAYBACK_ACTIVITY_STORAGE_PREFIX =
@@ -4696,6 +5196,8 @@ const AUDIOBOOK_BOOKMARK_STORAGE_PREFIX =
   "openbook-audiobook-bookmarks-v1";
 const AUDIOBOOK_BOOKMARK_EVENT =
   "openbook-audiobook-bookmarks-changed";
+const AUDIOBOOK_BOOKMARK_JUMP_EVENT =
+  "openbook-audiobook-bookmark-jump";
 const AUDIOBOOK_BOOKMARK_BACKUP_SCHEMA =
   "openbook-audiobook-bookmarks";
 const AUDIOBOOK_BOOKMARK_BACKUP_VERSION =
@@ -4751,6 +5253,12 @@ interface AudiobookBookmark {
 interface AudiobookBookmarkEventDetail {
   jobId: number;
   bookmarks: AudiobookBookmark[];
+}
+
+
+interface AudiobookBookmarkJumpEventDetail {
+  jobId: number;
+  positionSeconds: number;
 }
 
 
@@ -7149,6 +7657,125 @@ function ResumeAudioPlayer({
 
   const playerKey =
     `${jobId}:${format.toLowerCase()}`;
+
+
+  useEffect(() => {
+    function handleExternalBookmarkJump(
+      event: Event,
+    ): void {
+      const customEvent =
+        event as CustomEvent<AudiobookBookmarkJumpEventDetail>;
+
+      if (
+        customEvent.detail?.jobId !==
+        jobId
+      ) {
+        return;
+      }
+
+      const currentAudio =
+        playerRef.current;
+
+      if (currentAudio === null) {
+        return;
+      }
+
+      const targetAudio: HTMLAudioElement =
+        currentAudio;
+
+      function applyBookmarkJump(): void {
+        const maximumTime =
+          Number.isFinite(
+            targetAudio.duration,
+          ) &&
+          targetAudio.duration > 0
+            ? targetAudio.duration
+            : Number.POSITIVE_INFINITY;
+
+        const nextTime =
+          Math.min(
+            maximumTime,
+            Math.max(
+              0,
+              customEvent.detail.positionSeconds,
+            ),
+          );
+
+        targetAudio.currentTime =
+          nextTime;
+
+        setCurrentTime(
+          nextTime,
+        );
+
+        const saved =
+          storePlaybackPosition(
+            jobId,
+            nextTime,
+            targetAudio.duration,
+          );
+
+        setPositionSaved(
+          saved,
+        );
+
+        setRestoredPosition(
+          saved
+            ? nextTime
+            : null,
+        );
+
+        lastSavedBucketRef.current =
+          Math.floor(
+            nextTime /
+              PLAYBACK_SAVE_INTERVAL_SECONDS,
+          );
+
+        recordLastPlayed(
+          jobId,
+        );
+
+        playerContainerRef.current?.scrollIntoView(
+          {
+            behavior: "smooth",
+            block: "center",
+          },
+        );
+      }
+
+      if (
+        targetAudio.readyState === 0
+      ) {
+        targetAudio.addEventListener(
+          "loadedmetadata",
+          applyBookmarkJump,
+          {
+            once: true,
+          },
+        );
+
+        return;
+      }
+
+      applyBookmarkJump();
+    }
+
+    window.addEventListener(
+      AUDIOBOOK_BOOKMARK_JUMP_EVENT,
+      handleExternalBookmarkJump,
+    );
+
+    return () => {
+      window.removeEventListener(
+        AUDIOBOOK_BOOKMARK_JUMP_EVENT,
+        handleExternalBookmarkJump,
+      );
+    };
+  }, [
+    jobId,
+    playerRef,
+  ]);
+
 
   const bookmarkTags =
     useMemo(
