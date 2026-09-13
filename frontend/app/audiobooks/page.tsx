@@ -598,6 +598,12 @@ export default function AudiobooksPage() {
     "audiobook",
   );
   const [
+    selectedAllBookmarksTag,
+    setSelectedAllBookmarksTag,
+  ] = useState<string | null>(
+    null,
+  );
+  const [
     ,
     setAllBookmarksRevision,
   ] = useState(0);
@@ -1091,15 +1097,80 @@ export default function AudiobooksPage() {
           ),
       );
 
+  const allBookmarkTags =
+    Array.from(
+      allBookmarks.reduce(
+        (
+          tagsByKey,
+          entry,
+        ) => {
+          for (
+            const tag
+            of entry.bookmark.tags ?? []
+          ) {
+            const comparisonKey =
+              tag.toLocaleLowerCase();
+
+            if (
+              !tagsByKey.has(
+                comparisonKey,
+              )
+            ) {
+              tagsByKey.set(
+                comparisonKey,
+                tag,
+              );
+            }
+          }
+
+          return tagsByKey;
+        },
+        new Map<string, string>(),
+      ).values(),
+    ).sort(
+      (first, second) =>
+        first.localeCompare(
+          second,
+          undefined,
+          {
+            sensitivity: "base",
+          },
+        ),
+    );
+
   const normalizedAllBookmarksSearch =
     allBookmarksSearch
       .trim()
       .toLocaleLowerCase();
 
+  const normalizedSelectedAllBookmarksTag =
+    selectedAllBookmarksTag
+      ?.toLocaleLowerCase() ??
+    null;
+
+  const allBookmarksFiltersActive =
+    normalizedAllBookmarksSearch !== "" ||
+    normalizedSelectedAllBookmarksTag !== null;
+
   const filteredAllBookmarks =
     allBookmarks
       .filter(
         (entry) => {
+          const matchesTag =
+            normalizedSelectedAllBookmarksTag ===
+              null ||
+            (
+              entry.bookmark.tags ?? []
+            ).some(
+              (tag) =>
+                tag.toLocaleLowerCase() ===
+                normalizedSelectedAllBookmarksTag,
+            );
+
+          if (!matchesTag) {
+            return false;
+          }
+
           if (
             normalizedAllBookmarksSearch ===
             ""
@@ -4073,7 +4144,7 @@ export default function AudiobooksPage() {
 
                   <span className="rounded-full border border-cyan-500/20 bg-slate-950/60 px-3 py-1 text-xs text-cyan-200">
                     {filteredAllBookmarks.length.toLocaleString()}
-                    {normalizedAllBookmarksSearch !== "" && (
+                    {allBookmarksFiltersActive && (
                       <>
                         /{allBookmarks.length.toLocaleString()}
                       </>
@@ -4084,7 +4155,7 @@ export default function AudiobooksPage() {
                   </span>
                 </div>
 
-                <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_auto]">
+                <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto_auto_auto]">
                   <div>
                     <label
                       className="text-xs font-semibold uppercase tracking-wide text-slate-500"
@@ -4105,6 +4176,46 @@ export default function AudiobooksPage() {
                       type="search"
                       value={allBookmarksSearch}
                     />
+                  </div>
+
+                  <div>
+                    <label
+                      className="text-xs font-semibold uppercase tracking-wide text-slate-500"
+                      htmlFor="all-bookmarks-tag"
+                    >
+                      Tag
+                    </label>
+
+                    <select
+                      className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400"
+                      id="all-bookmarks-tag"
+                      onChange={(event) =>
+                        setSelectedAllBookmarksTag(
+                          event.target.value === ""
+                            ? null
+                            : event.target.value,
+                        )
+                      }
+                      value={
+                        selectedAllBookmarksTag ??
+                        ""
+                      }
+                    >
+                      <option value="">
+                        All tags
+                      </option>
+
+                      {allBookmarkTags.map(
+                        (tag) => (
+                          <option
+                            key={tag}
+                            value={tag}
+                          >
+                            {tag}
+                          </option>
+                        ),
+                      )}
+                    </select>
                   </div>
 
                   <div>
@@ -4148,16 +4259,20 @@ export default function AudiobooksPage() {
                     <button
                       className="w-full rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-cyan-400 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-40"
                       disabled={
-                        normalizedAllBookmarksSearch === ""
+                        !allBookmarksFiltersActive
                       }
-                      onClick={() =>
+                      onClick={() => {
                         setAllBookmarksSearch(
                           "",
-                        )
-                      }
+                        );
+
+                        setSelectedAllBookmarksTag(
+                          null,
+                        );
+                      }}
                       type="button"
                     >
-                      Clear search
+                      Clear filters
                     </button>
                   </div>
                 </div>
