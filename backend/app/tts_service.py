@@ -1,4 +1,4 @@
-"""Local Piper text-to-speech services."""
+"""Local text-to-speech services for Piper and Kokoro."""
 
 from __future__ import annotations
 
@@ -11,6 +11,17 @@ from io import BytesIO
 from pathlib import Path
 
 from piper import PiperVoice, SynthesisConfig
+
+from app.kokoro_client import (
+    KOKORO_DEFAULT_VOICE_ID,
+    KokoroClientError,
+    get_kokoro_voice_display_name,
+    is_kokoro_voice_available,
+    is_kokoro_voice_id,
+    is_supported_kokoro_voice_id,
+    list_available_kokoro_voices,
+    synthesize_kokoro_wav,
+)
 
 BACKEND_DIRECTORY = Path(__file__).resolve().parent.parent
 VOICE_DIRECTORY = BACKEND_DIRECTORY / "data" / "voices"
@@ -27,17 +38,23 @@ _voice_lock = threading.RLock()
 
 
 class TtsUnavailableError(RuntimeError):
-    """Raised when the local Piper engine is unavailable."""
+    """Raised when a selected local narration engine is unavailable."""
 
 
 def get_default_voice_name() -> str:
-    """Return the configured default Piper voice."""
+    """Return the best currently available default narrator."""
+    if is_kokoro_voice_available(
+        KOKORO_DEFAULT_VOICE_ID
+    ):
+        return KOKORO_DEFAULT_VOICE_ID
+
     return DEFAULT_VOICE_NAME
 
-
-def list_installed_voices() -> list[dict[str, str]]:
-    """Return complete Piper voices installed locally."""
-    voices: list[dict[str, str]] = []
+def list_installed_voices() -> list[dict[str, object]]:
+    """Return all locally available OpenBook narrator voices."""
+    voices = (
+        list_available_kokoro_voices()
+    )
 
     if not VOICE_DIRECTORY.is_dir():
         return voices
@@ -60,25 +77,35 @@ def list_installed_voices() -> list[dict[str, str]]:
                 "name": format_voice_display_name(
                     voice_name
                 ),
+                "engine": "Piper",
+                "group": "lightweight",
+                "featured": False,
             }
         )
 
     return voices
 
-
 def get_voice_display_name(
     voice_name: str | None,
 ) -> str:
-    """Return the readable name for a selected or default voice."""
+    """Return the readable name for a selected or default narrator."""
     resolved_voice_name = (
         voice_name
         or get_default_voice_name()
     )
 
+    if is_kokoro_voice_id(
+        resolved_voice_name
+    ):
+        return (
+            get_kokoro_voice_display_name(
+                resolved_voice_name
+            )
+        )
+
     return format_voice_display_name(
         resolved_voice_name
     )
-
 
 def format_voice_display_name(
     voice_name: str,
@@ -119,11 +146,33 @@ def format_voice_display_name(
 def get_tts_status(
     voice_name: str | None = None,
 ) -> dict[str, object]:
-    """Return local TTS availability for one voice."""
+    """Return local TTS availability for one narrator."""
     resolved_name = (
         voice_name
-        or DEFAULT_VOICE_NAME
+        or get_default_voice_name()
     ).strip()
+
+    if is_kokoro_voice_id(
+        resolved_name
+    ):
+        available = (
+            is_kokoro_voice_available(
+                resolved_name
+            )
+        )
+
+        return {
+            "available": available,
+            "engine": "Kokoro",
+            "voice": resolved_name,
+            "default_voice": get_default_voice_name(),
+            "model_installed": available,
+            "config_installed": available,
+            "worker_available": available,
+            "max_preview_characters": (
+                MAX_PREVIEW_CHARACTERS
+            ),
+        }
 
     try:
         model_path, config_path = (
@@ -150,9 +199,7 @@ def get_tts_status(
         ),
         "engine": "Piper",
         "voice": resolved_name,
-        "default_voice": (
-            DEFAULT_VOICE_NAME
-        ),
+        "default_voice": get_default_voice_name(),
         "model_installed": (
             model_installed
         ),
@@ -164,20 +211,39 @@ def get_tts_status(
         ),
     }
 
-
 def resolve_voice_name(
     voice_name: str | None,
 ) -> str:
-    """Resolve and validate an installed Piper voice."""
+    """Resolve and validate an available local narrator."""
     resolved_name = (
         voice_name
-        or DEFAULT_VOICE_NAME
+        or get_default_voice_name()
     ).strip()
 
     if not resolved_name:
         resolved_name = (
-            DEFAULT_VOICE_NAME
+            get_default_voice_name()
         )
+
+    if is_kokoro_voice_id(
+        resolved_name
+    ):
+        if not is_supported_kokoro_voice_id(
+            resolved_name
+        ):
+            raise TtsUnavailableError(
+                "The selected Kokoro narrator is not supported."
+            )
+
+        if not is_kokoro_voice_available(
+            resolved_name
+        ):
+            raise TtsUnavailableError(
+                "The selected Kokoro narrator is unavailable. "
+                "Make sure the local Kokoro worker is running."
+            )
+
+        return resolved_name
 
     try:
         model_path, config_path = (
@@ -203,7 +269,6 @@ def resolve_voice_name(
         )
 
     return resolved_name
-
 
 def get_voice_paths(
     voice_name: str,
@@ -385,7 +450,7 @@ def _split_long_speech_piece(
 
         if not piece:
             raise RuntimeError(
-                "Could not split a long Piper synthesis sentence."
+                "Could not split a long speech synthesis sentence."
             )
 
         pieces.append(
@@ -408,7 +473,7 @@ def split_cancellable_speech_text(
     text: str,
     maximum_chars: int = CANCELLABLE_SYNTHESIS_MAX_CHARS,
 ) -> list[str]:
-    """Return Piper input groups with long sentences isolated and split."""
+    """Return cancellable speech groups with long sentences isolated and split."""
     if maximum_chars < 20:
         raise ValueError(
             "The cancellable synthesis limit must be at least 20 characters."
@@ -470,7 +535,7 @@ def synthesize_wav(
     *,
     cancel_callback: Callable[[], None] | None = None,
 ) -> bytes:
-    """Generate complete WAV audio using one Piper voice."""
+    """Generate complete WAV audio using the selected local narrator."""
     speech_text = normalize_speech_text(
         text
     )
@@ -482,6 +547,35 @@ def synthesize_wav(
     resolved_voice = resolve_voice_name(
         voice_name
     )
+
+    if is_kokoro_voice_id(
+        resolved_voice
+    ):
+        if cancel_callback is not None:
+            cancel_callback()
+
+        try:
+            audio_bytes = synthesize_kokoro_wav(
+                speech_text,
+                speed,
+                resolved_voice,
+            )
+        except KokoroClientError as error:
+            raise TtsUnavailableError(
+                str(error)
+            ) from error
+
+        if cancel_callback is not None:
+            cancel_callback()
+
+        if not audio_bytes.startswith(
+            b"RIFF"
+        ):
+            raise RuntimeError(
+                "Kokoro did not produce a valid WAV file."
+            )
+
+        return audio_bytes
 
     synthesis_config = SynthesisConfig(
         length_scale=1.0 / speed,

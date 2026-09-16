@@ -122,6 +122,9 @@ interface GenerationEstimate {
 interface VoiceOption {
   id: string;
   name: string;
+  engine: "Kokoro" | "Piper";
+  group: "featured" | "more" | "lightweight";
+  featured: boolean;
 }
 
 interface VoiceListResponse {
@@ -3394,7 +3397,7 @@ export default function AudiobooksPage() {
 
                   {voices.length === 0 ? (
                     <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
-                      No complete Piper voices are installed.
+                      No local narrator voices are currently available.
                     </p>
                   ) : (
                     <>
@@ -3417,18 +3420,80 @@ export default function AudiobooksPage() {
                         }}
                         value={voice}
                       >
-                        {voices.map((installedVoice) => (
-                          <option
-                            key={installedVoice.id}
-                            value={installedVoice.id}
-                          >
-                            {installedVoice.name}
-                          </option>
-                        ))}
+                        {voices.some(
+                          (installedVoice) =>
+                            installedVoice.group ===
+                            "featured",
+                        ) && (
+                          <optgroup label="Featured audiobook voices">
+                            {voices
+                              .filter(
+                                (installedVoice) =>
+                                  installedVoice.group ===
+                                  "featured",
+                              )
+                              .map((installedVoice) => (
+                                <option
+                                  key={installedVoice.id}
+                                  value={installedVoice.id}
+                                >
+                                  {installedVoice.name}
+                                </option>
+                              ))}
+                          </optgroup>
+                        )}
+
+                        {voices.some(
+                          (installedVoice) =>
+                            installedVoice.group ===
+                            "more",
+                        ) && (
+                          <optgroup label="More audiobook voices">
+                            {voices
+                              .filter(
+                                (installedVoice) =>
+                                  installedVoice.group ===
+                                  "more",
+                              )
+                              .map((installedVoice) => (
+                                <option
+                                  key={installedVoice.id}
+                                  value={installedVoice.id}
+                                >
+                                  {installedVoice.name}
+                                </option>
+                              ))}
+                          </optgroup>
+                        )}
+
+                        {voices.some(
+                          (installedVoice) =>
+                            installedVoice.group ===
+                            "lightweight",
+                        ) && (
+                          <optgroup label="Lightweight voices">
+                            {voices
+                              .filter(
+                                (installedVoice) =>
+                                  installedVoice.group ===
+                                  "lightweight",
+                              )
+                              .map((installedVoice) => (
+                                <option
+                                  key={installedVoice.id}
+                                  value={installedVoice.id}
+                                >
+                                  {installedVoice.name}
+                                </option>
+                              ))}
+                          </optgroup>
+                        )}
                       </select>
 
                       <p className="mt-2 text-xs text-slate-500">
-                        Local Piper voice · saved with this audiobook job
+                        Kokoro audiobook narration · Piper remains available
+                        as a lightweight local fallback · saved with this
+                        audiobook job
                       </p>
 
                       <button

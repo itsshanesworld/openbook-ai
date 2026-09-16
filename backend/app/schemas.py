@@ -127,7 +127,7 @@ class AudiobookCreateRequest(BaseModel):
         cls,
         value: str | None,
     ) -> str | None:
-        """Normalize an optional Piper voice identifier."""
+        """Normalize an optional narrator voice identifier."""
         if value is None:
             return None
 

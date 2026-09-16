@@ -177,7 +177,7 @@ def create_direct_m4b(
 
                 if compression_type != "NONE":
                     raise ExportError(
-                        "Piper produced compressed WAV audio."
+                        "The narration engine produced compressed WAV audio."
                     )
 
                 pcm_format = PCM_FORMATS.get(

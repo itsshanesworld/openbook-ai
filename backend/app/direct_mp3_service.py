@@ -228,7 +228,7 @@ def create_direct_mp3(
 
                 if compression_type != "NONE":
                     raise ExportError(
-                        "Piper produced compressed WAV audio "
+                        "The narration engine produced compressed WAV audio "
                         "that cannot be streamed directly."
                     )
 

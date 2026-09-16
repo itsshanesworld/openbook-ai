@@ -238,7 +238,7 @@ def get_audiobook_storage_estimate(
 
 @router.get("/tts/voices")
 def list_tts_voices() -> dict[str, object]:
-    """Return locally installed Piper narrator voices."""
+    """Return locally available narrator voices."""
     return {
         "default_voice": get_default_voice_name(),
         "voices": list_installed_voices(),
@@ -424,7 +424,7 @@ def create_audiobook_job(
     if not bool(tts_status["available"]):
         raise HTTPException(
             status_code=503,
-            detail="The selected local Piper voice is unavailable.",
+            detail="The selected local narrator voice is unavailable.",
         )
 
     total_words = sum(
