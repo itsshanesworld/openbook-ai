@@ -604,6 +604,16 @@ export default function AudiobooksPage() {
     null,
   );
   const [
+    pinnedAllBookmarkKeys,
+    setPinnedAllBookmarkKeys,
+  ] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [
+    showPinnedAllBookmarksOnly,
+    setShowPinnedAllBookmarksOnly,
+  ] = useState(false);
+  const [
     ,
     setAllBookmarksRevision,
   ] = useState(0);
@@ -639,6 +649,10 @@ export default function AudiobooksPage() {
   useEffect(() => {
     setPinnedJobIds(
       readPinnedAudiobookJobIds(),
+    );
+
+    setPinnedAllBookmarkKeys(
+      readPinnedAllBookmarkKeys(),
     );
   }, []);
 
@@ -1150,12 +1164,28 @@ export default function AudiobooksPage() {
 
   const allBookmarksFiltersActive =
     normalizedAllBookmarksSearch !== "" ||
-    normalizedSelectedAllBookmarksTag !== null;
+    normalizedSelectedAllBookmarksTag !== null ||
+    showPinnedAllBookmarksOnly;
 
   const filteredAllBookmarks =
     allBookmarks
       .filter(
         (entry) => {
+          const pinKey =
+            getAllBookmarkPinKey(
+              entry.jobId,
+              entry.bookmark.id,
+            );
+
+          if (
+            showPinnedAllBookmarksOnly &&
+            !pinnedAllBookmarkKeys.has(
+              pinKey,
+            )
+          ) {
+            return false;
+          }
+
           const matchesTag =
             normalizedSelectedAllBookmarksTag ===
               null ||
@@ -1197,6 +1227,31 @@ export default function AudiobooksPage() {
       )
       .sort(
         (first, second) => {
+          const firstPinned =
+            pinnedAllBookmarkKeys.has(
+              getAllBookmarkPinKey(
+                first.jobId,
+                first.bookmark.id,
+              ),
+            );
+
+          const secondPinned =
+            pinnedAllBookmarkKeys.has(
+              getAllBookmarkPinKey(
+                second.jobId,
+                second.bookmark.id,
+              ),
+            );
+
+          if (
+            firstPinned !==
+            secondPinned
+          ) {
+            return firstPinned
+              ? -1
+              : 1;
+          }
+
           const compareAudiobooks =
             first.bookTitle.localeCompare(
               second.bookTitle,
@@ -1859,6 +1914,44 @@ export default function AudiobooksPage() {
         },
       );
     }
+  }
+
+
+  function handleToggleAllBookmarkPinned(
+    entry: AllAudiobookBookmarkEntry,
+  ): void {
+    const pinKey =
+      getAllBookmarkPinKey(
+        entry.jobId,
+        entry.bookmark.id,
+      );
+
+    const nextPinnedKeys =
+      new Set(
+        pinnedAllBookmarkKeys,
+      );
+
+    if (
+      nextPinnedKeys.has(
+        pinKey,
+      )
+    ) {
+      nextPinnedKeys.delete(
+        pinKey,
+      );
+    } else {
+      nextPinnedKeys.add(
+        pinKey,
+      );
+    }
+
+    storePinnedAllBookmarkKeys(
+      nextPinnedKeys,
+    );
+
+    setPinnedAllBookmarkKeys(
+      nextPinnedKeys,
+    );
   }
 
 
@@ -4142,17 +4235,42 @@ export default function AudiobooksPage() {
                     </p>
                   </div>
 
-                  <span className="rounded-full border border-cyan-500/20 bg-slate-950/60 px-3 py-1 text-xs text-cyan-200">
-                    {filteredAllBookmarks.length.toLocaleString()}
-                    {allBookmarksFiltersActive && (
-                      <>
-                        /{allBookmarks.length.toLocaleString()}
-                      </>
-                    )}{" "}
-                    {filteredAllBookmarks.length === 1
-                      ? "bookmark"
-                      : "bookmarks"}
-                  </span>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <button
+                      aria-pressed={
+                        showPinnedAllBookmarksOnly
+                      }
+                      className={[
+                        "rounded-full border px-3 py-1 text-xs font-semibold transition",
+                        showPinnedAllBookmarksOnly
+                          ? "border-amber-400/60 bg-amber-400/10 text-amber-200"
+                          : "border-slate-700 bg-slate-950/60 text-slate-300 hover:border-amber-400/60 hover:text-amber-200",
+                      ].join(" ")}
+                      onClick={() =>
+                        setShowPinnedAllBookmarksOnly(
+                          (currentValue) =>
+                            !currentValue,
+                        )
+                      }
+                      type="button"
+                    >
+                      {showPinnedAllBookmarksOnly
+                        ? "★ Pinned only"
+                        : "☆ Pinned only"}
+                    </button>
+
+                    <span className="rounded-full border border-cyan-500/20 bg-slate-950/60 px-3 py-1 text-xs text-cyan-200">
+                      {filteredAllBookmarks.length.toLocaleString()}
+                      {allBookmarksFiltersActive && (
+                        <>
+                          /{allBookmarks.length.toLocaleString()}
+                        </>
+                      )}{" "}
+                      {filteredAllBookmarks.length === 1
+                        ? "bookmark"
+                        : "bookmarks"}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto_auto_auto]">
@@ -4269,6 +4387,10 @@ export default function AudiobooksPage() {
                         setSelectedAllBookmarksTag(
                           null,
                         );
+
+                        setShowPinnedAllBookmarksOnly(
+                          false,
+                        );
                       }}
                       type="button"
                     >
@@ -4289,19 +4411,79 @@ export default function AudiobooksPage() {
                   <div className="mt-4 max-h-96 space-y-2 overflow-y-auto pr-1">
                     {filteredAllBookmarks.map(
                       (entry) => (
-                        <button
-                          className="w-full rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-left transition hover:border-cyan-500/40 hover:bg-cyan-500/5"
+                        <div
+                          className="relative"
                           key={`${entry.jobId}:${entry.bookmark.id}`}
-                          onClick={() =>
-                            handleOpenAllBookmark(
-                              entry,
-                            )
-                          }
-                          title={`Jump to ${formatAllBookmarkPosition(
-                            entry.bookmark.positionSeconds,
-                          )} in ${entry.bookTitle}`}
-                          type="button"
                         >
+                          <button
+                            aria-label={`${
+                              pinnedAllBookmarkKeys.has(
+                                getAllBookmarkPinKey(
+                                  entry.jobId,
+                                  entry.bookmark.id,
+                                ),
+                              )
+                                ? "Unpin"
+                                : "Pin"
+                            } ${entry.bookmark.name}`}
+                            aria-pressed={
+                              pinnedAllBookmarkKeys.has(
+                                getAllBookmarkPinKey(
+                                  entry.jobId,
+                                  entry.bookmark.id,
+                                ),
+                              )
+                            }
+                            className={[
+                              "absolute right-3 top-3 z-10 flex h-8 w-8 items-center justify-center rounded-full border text-base font-bold transition",
+                              pinnedAllBookmarkKeys.has(
+                                getAllBookmarkPinKey(
+                                  entry.jobId,
+                                  entry.bookmark.id,
+                                ),
+                              )
+                                ? "border-amber-400/60 bg-amber-400/10 text-amber-200"
+                                : "border-slate-700 bg-slate-900 text-slate-400 hover:border-amber-400/60 hover:text-amber-200",
+                            ].join(" ")}
+                            onClick={() =>
+                              handleToggleAllBookmarkPinned(
+                                entry,
+                              )
+                            }
+                            title={
+                              pinnedAllBookmarkKeys.has(
+                                getAllBookmarkPinKey(
+                                  entry.jobId,
+                                  entry.bookmark.id,
+                                ),
+                              )
+                                ? "Unpin bookmark"
+                                : "Pin bookmark"
+                            }
+                            type="button"
+                          >
+                            {pinnedAllBookmarkKeys.has(
+                              getAllBookmarkPinKey(
+                                entry.jobId,
+                                entry.bookmark.id,
+                              ),
+                            )
+                              ? "★"
+                              : "☆"}
+                          </button>
+
+                          <button
+                            className="w-full rounded-xl border border-slate-800 bg-slate-950/60 p-3 pr-14 text-left transition hover:border-cyan-500/40 hover:bg-cyan-500/5"
+                            onClick={() =>
+                              handleOpenAllBookmark(
+                                entry,
+                              )
+                            }
+                            title={`Jump to ${formatAllBookmarkPosition(
+                              entry.bookmark.positionSeconds,
+                            )} in ${entry.bookTitle}`}
+                            type="button"
+                          >
                           <div className="flex flex-wrap items-start justify-between gap-3">
                             <div className="min-w-0">
                               <p className="break-words text-sm font-semibold text-white">
@@ -4351,10 +4533,11 @@ export default function AudiobooksPage() {
                             </div>
                           )}
 
-                          <p className="mt-2 text-[11px] font-semibold text-cyan-300">
-                            Jump to bookmark →
-                          </p>
-                        </button>
+                            <p className="mt-2 text-[11px] font-semibold text-cyan-300">
+                              Jump to bookmark →
+                            </p>
+                          </button>
+                        </div>
                       ),
                     )}
                   </div>
@@ -5309,6 +5492,8 @@ const NOW_PLAYING_COLLAPSED_EVENT =
   "openbook-audiobook-now-playing-collapsed-changed";
 const AUDIOBOOK_BOOKMARK_STORAGE_PREFIX =
   "openbook-audiobook-bookmarks-v1";
+const AUDIOBOOK_BOOKMARK_PINNED_STORAGE_KEY =
+  "openbook-audiobook-bookmark-pins-v1";
 const AUDIOBOOK_BOOKMARK_EVENT =
   "openbook-audiobook-bookmarks-changed";
 const AUDIOBOOK_BOOKMARK_JUMP_EVENT =
@@ -6396,6 +6581,81 @@ function getAudiobookJobBookmarkBackupFormat(
 
     default:
       return null;
+  }
+}
+
+
+function getAllBookmarkPinKey(
+  jobId: number,
+  bookmarkId: string,
+): string {
+  return `${jobId}:${bookmarkId}`;
+}
+
+
+function readPinnedAllBookmarkKeys(): Set<string> {
+  if (typeof window === "undefined") {
+    return new Set();
+  }
+
+  try {
+    const storedValue =
+      window.localStorage.getItem(
+        AUDIOBOOK_BOOKMARK_PINNED_STORAGE_KEY,
+      );
+
+    if (storedValue === null) {
+      return new Set();
+    }
+
+    const parsedValue:
+      unknown =
+        JSON.parse(
+          storedValue,
+        );
+
+    if (!Array.isArray(parsedValue)) {
+      return new Set();
+    }
+
+    return new Set(
+      parsedValue.filter(
+        (value): value is string =>
+          typeof value === "string" &&
+          value.trim() !== "",
+      ),
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+
+function storePinnedAllBookmarkKeys(
+  pinnedKeys: Set<string>,
+): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    if (pinnedKeys.size === 0) {
+      window.localStorage.removeItem(
+        AUDIOBOOK_BOOKMARK_PINNED_STORAGE_KEY,
+      );
+
+      return;
+    }
+
+    window.localStorage.setItem(
+      AUDIOBOOK_BOOKMARK_PINNED_STORAGE_KEY,
+      JSON.stringify(
+        Array.from(
+          pinnedKeys,
+        ).sort(),
+      ),
+    );
+  } catch {
   }
 }
 
