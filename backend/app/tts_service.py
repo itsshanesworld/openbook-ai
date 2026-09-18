@@ -77,6 +77,9 @@ def list_installed_voices() -> list[dict[str, object]]:
                 "name": format_voice_display_name(
                     voice_name
                 ),
+                "description": get_piper_voice_description(
+                    voice_name
+                ),
                 "engine": "Piper",
                 "group": "lightweight",
                 "featured": False,
@@ -106,6 +109,28 @@ def get_voice_display_name(
     return format_voice_display_name(
         resolved_voice_name
     )
+
+def get_piper_voice_description(
+    voice_name: str,
+) -> str:
+    """Return a short audiobook-oriented Piper voice description."""
+    descriptions = {
+        "en_US-amy-medium": (
+            "Bright · lightweight"
+        ),
+        "en_US-hfc_male-medium": (
+            "Male · lightweight"
+        ),
+        "en_US-lessac-medium": (
+            "Clear · lightweight"
+        ),
+    }
+
+    return descriptions.get(
+        voice_name,
+        "Fast · lightweight local voice",
+    )
+
 
 def format_voice_display_name(
     voice_name: str,

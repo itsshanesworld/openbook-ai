@@ -122,6 +122,7 @@ interface GenerationEstimate {
 interface VoiceOption {
   id: string;
   name: string;
+  description: string;
   engine: "Kokoro" | "Piper";
   group: "featured" | "more" | "lightweight";
   featured: boolean;
@@ -3437,7 +3438,8 @@ export default function AudiobooksPage() {
                                   key={installedVoice.id}
                                   value={installedVoice.id}
                                 >
-                                  {installedVoice.name}
+                                  {installedVoice.name} —{" "}
+                                  {installedVoice.description}
                                 </option>
                               ))}
                           </optgroup>
@@ -3460,7 +3462,8 @@ export default function AudiobooksPage() {
                                   key={installedVoice.id}
                                   value={installedVoice.id}
                                 >
-                                  {installedVoice.name}
+                                  {installedVoice.name} —{" "}
+                                  {installedVoice.description}
                                 </option>
                               ))}
                           </optgroup>
@@ -3483,7 +3486,8 @@ export default function AudiobooksPage() {
                                   key={installedVoice.id}
                                   value={installedVoice.id}
                                 >
-                                  {installedVoice.name}
+                                  {installedVoice.name} —{" "}
+                                  {installedVoice.description}
                                 </option>
                               ))}
                           </optgroup>
@@ -3491,9 +3495,9 @@ export default function AudiobooksPage() {
                       </select>
 
                       <p className="mt-2 text-xs text-slate-500">
-                        Kokoro audiobook narration · Piper remains available
-                        as a lightweight local fallback · saved with this
-                        audiobook job
+                        Narrator descriptions are tuned for audiobook
+                        selection · Piper remains available as a lightweight
+                        local fallback · saved with this audiobook job
                       </p>
 
                       <button

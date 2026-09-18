@@ -67,6 +67,7 @@ class KokoroVoiceSpec:
 
     raw_id: str
     name: str
+    description: str
     group: str
     featured: bool
 
@@ -83,36 +84,42 @@ KOKORO_VOICE_SPECS = (
     KokoroVoiceSpec(
         raw_id="af_heart",
         name="Heart",
+        description="Warm · immersive",
         group="featured",
         featured=True,
     ),
     KokoroVoiceSpec(
         raw_id="af_bella",
         name="Bella",
+        description="Expressive · polished",
         group="featured",
         featured=True,
     ),
     KokoroVoiceSpec(
         raw_id="am_michael",
         name="Michael",
+        description="Male audiobook · calm",
         group="featured",
         featured=True,
     ),
     KokoroVoiceSpec(
         raw_id="af_sarah",
         name="Sarah",
+        description="Natural · balanced",
         group="more",
         featured=False,
     ),
     KokoroVoiceSpec(
         raw_id="bf_emma",
         name="Emma",
+        description="British · warm",
         group="more",
         featured=False,
     ),
     KokoroVoiceSpec(
         raw_id="bm_george",
         name="George",
+        description="British male · steady",
         group="more",
         featured=False,
     ),
@@ -268,6 +275,7 @@ def list_available_kokoro_voices() -> list[dict[str, object]]:
         {
             "id": voice.id,
             "name": voice.name,
+            "description": voice.description,
             "engine": "Kokoro",
             "group": voice.group,
             "featured": voice.featured,
