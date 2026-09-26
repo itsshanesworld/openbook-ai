@@ -524,10 +524,10 @@ export default function AudiobooksPage() {
     useState<GenerationEstimate | null>(null);
   const [estimateLoading, setEstimateLoading] =
     useState(false);
-  const [previewingVoice, setPreviewingVoice] = useState(false);
-  const [voicePreviewUrl, setVoicePreviewUrl] =
+  const [previewingVoiceId, setPreviewingVoiceId] =
     useState<string | null>(null);
-  const voicePreviewUrlRef = useRef<string | null>(null);
+  const [voicePreviewUrls, setVoicePreviewUrls] =
+    useState<Record<string, string>>({});
   const libraryBookmarkImportInputRef =
     useRef<HTMLInputElement | null>(
       null,
@@ -2075,13 +2075,11 @@ export default function AudiobooksPage() {
 
   useEffect(() => {
     return () => {
-      if (voicePreviewUrlRef.current) {
-        URL.revokeObjectURL(
-          voicePreviewUrlRef.current,
-        );
-      }
+      Object.values(voicePreviewUrls).forEach((url) => {
+        URL.revokeObjectURL(url);
+      });
     };
-  }, []);
+  }, [voicePreviewUrls]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2277,24 +2275,57 @@ export default function AudiobooksPage() {
       window.clearInterval(interval);
   }, [loadJobs]);
 
-  function clearVoicePreview(): void {
-    if (voicePreviewUrlRef.current) {
-      URL.revokeObjectURL(
-        voicePreviewUrlRef.current,
+  function clearVoicePreview(
+    voiceId?: string,
+  ): void {
+    if (voiceId) {
+      setVoicePreviewUrls(
+        (current) => {
+          const existingUrl =
+            current[voiceId];
+
+          if (existingUrl) {
+            URL.revokeObjectURL(
+              existingUrl,
+            );
+          }
+
+          const next = {
+            ...current,
+          };
+
+          delete next[voiceId];
+
+          return next;
+        },
       );
 
-      voicePreviewUrlRef.current = null;
-    }
-
-    setVoicePreviewUrl(null);
-  }
-
-  async function previewNarrator(): Promise<void> {
-    if (!voice) {
       return;
     }
 
-    setPreviewingVoice(true);
+    setVoicePreviewUrls(
+      (current) => {
+        Object.values(current).forEach(
+          (url) => {
+            URL.revokeObjectURL(url);
+          },
+        );
+
+        return {};
+      },
+    );
+  }
+
+  async function previewVoice(
+    voiceId: string,
+  ): Promise<void> {
+    if (!voiceId) {
+      return;
+    }
+
+    setPreviewingVoiceId(
+      voiceId,
+    );
     clearMessages();
 
     try {
@@ -2310,7 +2341,7 @@ export default function AudiobooksPage() {
               "Welcome to OpenBook AI. "
               + "This is a preview of the selected narrator voice.",
             speed,
-            voice,
+            voice: voiceId,
           }),
         },
       );
@@ -2332,23 +2363,36 @@ export default function AudiobooksPage() {
         );
       }
 
-      const audioBlob = await response.blob();
+      const audioBlob =
+        await response.blob();
 
-      clearVoicePreview();
+      setVoicePreviewUrls(
+        (current) => {
+          const existingUrl =
+            current[voiceId];
 
-      const nextUrl = URL.createObjectURL(
-        audioBlob,
+          if (existingUrl) {
+            URL.revokeObjectURL(
+              existingUrl,
+            );
+          }
+
+          return {
+            ...current,
+            [voiceId]:
+              URL.createObjectURL(
+                audioBlob,
+              ),
+          };
+        },
       );
-
-      voicePreviewUrlRef.current = nextUrl;
-      setVoicePreviewUrl(nextUrl);
     } catch (caughtError) {
       showError(
         caughtError,
         "The narrator preview could not be generated.",
       );
     } finally {
-      setPreviewingVoice(false);
+      setPreviewingVoiceId(null);
     }
   }
 
@@ -3389,140 +3433,407 @@ export default function AudiobooksPage() {
                 )}
 
                 <div className="mt-6">
-                  <label
-                    className="block text-sm font-semibold"
-                    htmlFor="voice"
-                  >
-                    Narrator voice
-                  </label>
+                  <div className="flex items-end justify-between gap-3">
+                    <div>
+                      <label className="block text-sm font-semibold">
+                        Narrator voice
+                      </label>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Choose a voice, then preview it before creating your audiobook.
+                      </p>
+                    </div>
+
+                    {voice && (
+                      <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 text-[11px] font-semibold text-cyan-200">
+                        Selected:{" "}
+                        {voices.find(
+                          (installedVoice) =>
+                            installedVoice.id === voice,
+                        )?.name ?? voice}
+                      </span>
+                    )}
+                  </div>
 
                   {voices.length === 0 ? (
-                    <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+                    <p className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
                       No local narrator voices are currently available.
                     </p>
                   ) : (
                     <>
-                      <select
-                        className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 p-3"
-                        id="voice"
-                        onChange={(event) => {
-                          const nextVoice =
-                            event.target.value;
+                      <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950/50 p-4 sm:p-5">
+                        <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                          <div>
+                            <h3 className="text-base font-bold text-white">
+                              Choose your narrator
+                            </h3>
+                            <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-400">
+                              Listen to each voice before you decide. Select a narrator
+                              to use for your audiobook.
+                            </p>
+                          </div>
 
-                          setVoice(nextVoice);
+                          <span className="text-xs font-medium text-slate-500">
+                            {voices.filter(
+                              (installedVoice) =>
+                                installedVoice.group !== "lightweight",
+                            ).length}{" "}
+                            audiobook voices
+                          </span>
+                        </div>
 
-                          saveAudiobookPreference(
-                            NARRATOR_STORAGE_KEY,
-                            nextVoice,
-                          );
-
-                          clearVoicePreview();
-                          clearMessages();
-                        }}
-                        value={voice}
-                      >
                         {voices.some(
                           (installedVoice) =>
-                            installedVoice.group ===
-                            "featured",
+                            installedVoice.group === "featured",
                         ) && (
-                          <optgroup label="Featured audiobook voices">
-                            {voices
-                              .filter(
-                                (installedVoice) =>
-                                  installedVoice.group ===
-                                  "featured",
-                              )
-                              .map((installedVoice) => (
-                                <option
-                                  key={installedVoice.id}
-                                  value={installedVoice.id}
-                                >
-                                  {installedVoice.name} —{" "}
-                                  {installedVoice.description}
-                                </option>
-                              ))}
-                          </optgroup>
+                          <div>
+                            <div className="mb-3 flex items-center gap-2">
+                              <h4 className="text-sm font-semibold text-slate-100">
+                                Featured
+                              </h4>
+                              <span className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-300">
+                                Kokoro
+                              </span>
+                            </div>
+
+                            <div className="grid gap-4">
+                              {voices
+                                .filter(
+                                  (installedVoice) =>
+                                    installedVoice.group === "featured",
+                                )
+                                .map((installedVoice) => {
+                                  const selected =
+                                    voice === installedVoice.id;
+                                  const previewUrl =
+                                    voicePreviewUrls[installedVoice.id];
+                                  const previewing =
+                                    previewingVoiceId === installedVoice.id;
+
+                                  return (
+                                    <div
+                                      key={installedVoice.id}
+                                      className={`flex min-h-[250px] flex-col rounded-2xl border p-4 transition-all ${
+                                        selected
+                                          ? "border-cyan-400/70 bg-cyan-400/[0.08] shadow-lg shadow-cyan-950/30"
+                                          : "border-slate-700/80 bg-slate-900/70 hover:-translate-y-0.5 hover:border-slate-600 hover:bg-slate-900"
+                                      }`}
+                                    >
+                                      <button
+                                        type="button"
+                                        className="flex flex-1 flex-col text-left"
+                                        onClick={() => {
+                                          setVoice(installedVoice.id);
+
+                                          saveAudiobookPreference(
+                                            NARRATOR_STORAGE_KEY,
+                                            installedVoice.id,
+                                          );
+
+                                          clearMessages();
+                                        }}
+                                      >
+                                        <div className="flex items-start justify-between gap-3">
+                                          <div className="min-w-0">
+                                            <div className="flex items-center gap-2">
+                                              <h5 className="truncate text-lg font-bold text-white">
+                                                {installedVoice.name}
+                                              </h5>
+
+                                              {selected && (
+                                                <span className="shrink-0 rounded-full bg-cyan-400 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-950">
+                                                  Selected
+                                                </span>
+                                              )}
+                                            </div>
+
+                                            <p className="mt-1 text-xs font-medium text-cyan-300">
+                                              {installedVoice.description}
+                                            </p>
+                                          </div>
+                                        </div>
+
+                                        <div className="mt-5 rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+                                          <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                                            Voice
+                                          </p>
+                                          <p className="mt-1 text-xs leading-5 text-slate-400">
+                                            {installedVoice.engine} narrator ·
+                                            {" "}
+                                            Designed for long-form audiobook listening
+                                          </p>
+                                        </div>
+                                      </button>
+
+                                      <div className="mt-4">
+                                        <button
+                                          type="button"
+                                          className={`w-full rounded-xl px-3 py-2.5 text-xs font-bold transition ${
+                                            previewing
+                                              ? "cursor-wait border border-cyan-400/40 bg-cyan-400/10 text-cyan-200"
+                                              : "border border-cyan-500/40 bg-cyan-500/5 text-cyan-200 hover:border-cyan-400 hover:bg-cyan-400/10"
+                                          } disabled:cursor-not-allowed disabled:opacity-50`}
+                                          disabled={
+                                            previewingVoiceId !== null &&
+                                            !previewing
+                                          }
+                                          onClick={() =>
+                                            void previewVoice(
+                                              installedVoice.id,
+                                            )
+                                          }
+                                        >
+                                          {previewing
+                                            ? "Generating preview..."
+                                            : previewUrl
+                                              ? "▶ Play preview again"
+                                              : "▶ Preview voice"}
+                                        </button>
+
+                                        {previewUrl && (
+                                          <audio
+                                            className="mt-3 w-full"
+                                            controls
+                                            preload="metadata"
+                                            src={previewUrl}
+                                          />
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                            </div>
+                          </div>
                         )}
 
                         {voices.some(
                           (installedVoice) =>
-                            installedVoice.group ===
-                            "more",
+                            installedVoice.group === "more",
                         ) && (
-                          <optgroup label="More audiobook voices">
-                            {voices
-                              .filter(
-                                (installedVoice) =>
-                                  installedVoice.group ===
-                                  "more",
-                              )
-                              .map((installedVoice) => (
-                                <option
-                                  key={installedVoice.id}
-                                  value={installedVoice.id}
-                                >
-                                  {installedVoice.name} —{" "}
-                                  {installedVoice.description}
-                                </option>
-                              ))}
-                          </optgroup>
+                          <div className="mt-7">
+                            <div className="mb-3 flex items-center gap-2">
+                              <h4 className="text-sm font-semibold text-slate-100">
+                                More voices
+                              </h4>
+                              <span className="rounded-full border border-slate-700 bg-slate-800/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                                Kokoro
+                              </span>
+                            </div>
+
+                            <div className="grid gap-4">
+                              {voices
+                                .filter(
+                                  (installedVoice) =>
+                                    installedVoice.group === "more",
+                                )
+                                .map((installedVoice) => {
+                                  const selected =
+                                    voice === installedVoice.id;
+                                  const previewUrl =
+                                    voicePreviewUrls[installedVoice.id];
+                                  const previewing =
+                                    previewingVoiceId === installedVoice.id;
+
+                                  return (
+                                    <div
+                                      key={installedVoice.id}
+                                      className={`flex min-h-[250px] flex-col rounded-2xl border p-4 transition-all ${
+                                        selected
+                                          ? "border-cyan-400/70 bg-cyan-400/[0.08]"
+                                          : "border-slate-800 bg-slate-950/50 hover:border-slate-700"
+                                      }`}
+                                    >
+                                      <button
+                                        type="button"
+                                        className="flex flex-1 flex-col text-left"
+                                        onClick={() => {
+                                          setVoice(installedVoice.id);
+
+                                          saveAudiobookPreference(
+                                            NARRATOR_STORAGE_KEY,
+                                            installedVoice.id,
+                                          );
+
+                                          clearMessages();
+                                        }}
+                                      >
+                                        <div className="flex items-start justify-between gap-3">
+                                          <div className="min-w-0">
+                                            <div className="flex items-center gap-2">
+                                              <h5 className="truncate text-lg font-bold text-white">
+                                                {installedVoice.name}
+                                              </h5>
+
+                                              {selected && (
+                                                <span className="shrink-0 rounded-full bg-cyan-400 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-950">
+                                                  Selected
+                                                </span>
+                                              )}
+                                            </div>
+
+                                            <p className="mt-1 text-xs font-medium text-cyan-300">
+                                              {installedVoice.description}
+                                            </p>
+                                          </div>
+                                        </div>
+
+                                        <div className="mt-5 rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+                                          <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                                            Voice
+                                          </p>
+                                          <p className="mt-1 text-xs leading-5 text-slate-400">
+                                            {installedVoice.engine} narrator ·
+                                            {" "}
+                                            Designed for long-form audiobook listening
+                                          </p>
+                                        </div>
+                                      </button>
+
+                                      <div className="mt-4">
+                                        <button
+                                          type="button"
+                                          className="w-full rounded-xl border border-cyan-500/40 bg-cyan-500/5 px-3 py-2.5 text-xs font-bold text-cyan-200 transition hover:border-cyan-400 hover:bg-cyan-400/10 disabled:cursor-not-allowed disabled:opacity-50"
+                                          disabled={
+                                            previewingVoiceId !== null &&
+                                            !previewing
+                                          }
+                                          onClick={() =>
+                                            void previewVoice(
+                                              installedVoice.id,
+                                            )
+                                          }
+                                        >
+                                          {previewing
+                                            ? "Generating preview..."
+                                            : previewUrl
+                                              ? "▶ Play preview again"
+                                              : "▶ Preview voice"}
+                                        </button>
+
+                                        {previewUrl && (
+                                          <audio
+                                            className="mt-3 w-full"
+                                            controls
+                                            preload="metadata"
+                                            src={previewUrl}
+                                          />
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                            </div>
+                          </div>
                         )}
 
                         {voices.some(
                           (installedVoice) =>
-                            installedVoice.group ===
-                            "lightweight",
+                            installedVoice.group === "lightweight",
                         ) && (
-                          <optgroup label="Lightweight voices">
-                            {voices
-                              .filter(
-                                (installedVoice) =>
-                                  installedVoice.group ===
-                                  "lightweight",
-                              )
-                              .map((installedVoice) => (
-                                <option
-                                  key={installedVoice.id}
-                                  value={installedVoice.id}
-                                >
-                                  {installedVoice.name} —{" "}
-                                  {installedVoice.description}
-                                </option>
-                              ))}
-                          </optgroup>
-                        )}
-                      </select>
+                          <div className="mt-7 border-t border-slate-800 pt-5">
+                            <div className="mb-3">
+                              <h4 className="text-sm font-semibold text-slate-200">
+                                Lightweight fallback voices
+                              </h4>
+                              <p className="mt-1 text-xs text-slate-500">
+                                Piper voices remain available when you want a
+                                fast local fallback.
+                              </p>
+                            </div>
 
-                      <p className="mt-2 text-xs text-slate-500">
-                        Narrator descriptions are tuned for audiobook
-                        selection · Piper remains available as a lightweight
-                        local fallback · saved with this audiobook job
+                            <div className="grid gap-3">
+                              {voices
+                                .filter(
+                                  (installedVoice) =>
+                                    installedVoice.group === "lightweight",
+                                )
+                                .map((installedVoice) => {
+                                  const selected =
+                                    voice === installedVoice.id;
+                                  const previewUrl =
+                                    voicePreviewUrls[installedVoice.id];
+                                  const previewing =
+                                    previewingVoiceId === installedVoice.id;
+
+                                  return (
+                                    <div
+                                      key={installedVoice.id}
+                                      className={`rounded-xl border p-3 ${
+                                        selected
+                                          ? "border-cyan-400/60 bg-cyan-400/5"
+                                          : "border-slate-800 bg-slate-950/40"
+                                      }`}
+                                    >
+                                      <button
+                                        type="button"
+                                        className="block w-full text-left"
+                                        onClick={() => {
+                                          setVoice(installedVoice.id);
+
+                                          saveAudiobookPreference(
+                                            NARRATOR_STORAGE_KEY,
+                                            installedVoice.id,
+                                          );
+
+                                          clearMessages();
+                                        }}
+                                      >
+                                        <div className="flex items-center justify-between gap-2">
+                                          <span className="text-sm font-semibold text-slate-200">
+                                            {installedVoice.name}
+                                          </span>
+
+                                          {selected && (
+                                            <span className="text-[9px] font-bold uppercase tracking-wide text-cyan-300">
+                                              Selected
+                                            </span>
+                                          )}
+                                        </div>
+
+                                        <p className="mt-1 text-xs leading-5 text-slate-500">
+                                          {installedVoice.description}
+                                        </p>
+                                      </button>
+
+                                      <button
+                                        type="button"
+                                        className="mt-3 w-full rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                                        disabled={
+                                          previewingVoiceId !== null &&
+                                          !previewing
+                                        }
+                                        onClick={() =>
+                                          void previewVoice(
+                                            installedVoice.id,
+                                          )
+                                        }
+                                      >
+                                        {previewing
+                                          ? "Generating..."
+                                          : previewUrl
+                                            ? "Preview again"
+                                            : "Preview"}
+                                      </button>
+
+                                      {previewUrl && (
+                                        <audio
+                                          className="mt-3 w-full"
+                                          controls
+                                          preload="metadata"
+                                          src={previewUrl}
+                                        />
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <p className="mt-4 text-xs text-slate-500">
+                        Your selected narrator is saved with this audiobook
+                        preference.
                       </p>
-
-                      <button
-                        className="mt-3 w-full rounded-lg border border-cyan-500/50 px-4 py-2 text-sm font-semibold text-cyan-200 disabled:opacity-50"
-                        disabled={
-                          !voice || previewingVoice
-                        }
-                        onClick={() =>
-                          void previewNarrator()
-                        }
-                        type="button"
-                      >
-                        {previewingVoice
-                          ? "Generating preview..."
-                          : "Preview narrator"}
-                      </button>
-
-                      {voicePreviewUrl && (
-                        <audio
-                          className="mt-3 w-full"
-                          controls
-                          preload="metadata"
-                          src={voicePreviewUrl}
-                        />
-                      )}
                     </>
                   )}
                 </div>
