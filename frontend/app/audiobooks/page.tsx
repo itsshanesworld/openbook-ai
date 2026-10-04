@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import VoiceCloneManager from "./VoiceCloneManager";
 import {
   ChangeEvent,
   ReactNode,
@@ -123,7 +124,7 @@ interface VoiceOption {
   id: string;
   name: string;
   description: string;
-  engine: "Kokoro" | "Piper";
+  engine: "Kokoro" | "Piper" | "OpenVoice";
   group: "featured" | "more" | "lightweight";
   featured: boolean;
 }
@@ -2261,6 +2262,43 @@ export default function AudiobooksPage() {
     void initialize();
   }, []);
 
+  async function reloadVoices(): Promise<void> {
+    try {
+      const voiceData = await requestJson<VoiceListResponse>(
+        `${API_URL}/tts/voices`,
+      );
+
+      setVoices(voiceData.voices);
+
+      // A deleted cloned voice must not stay selected.
+      if (
+        voice &&
+        !voiceData.voices.some(
+          (installedVoice) => installedVoice.id === voice,
+        )
+      ) {
+        const fallback =
+          voiceData.voices.find(
+            (installedVoice) =>
+              installedVoice.id === voiceData.default_voice,
+          )?.id ??
+          voiceData.voices[0]?.id ??
+          "";
+
+        setVoice(fallback);
+
+        if (fallback) {
+          saveAudiobookPreference(NARRATOR_STORAGE_KEY, fallback);
+        }
+      }
+    } catch (caughtError) {
+      showError(
+        caughtError,
+        "The narrator list could not be refreshed.",
+      );
+    }
+  }
+
   useEffect(() => {
     void loadJobs();
 
@@ -3836,6 +3874,11 @@ export default function AudiobooksPage() {
                       </p>
                     </>
                   )}
+
+                  <VoiceCloneManager
+                    apiUrl={API_URL}
+                    onChanged={() => void reloadVoices()}
+                  />
                 </div>
 
                 <div className="mt-6">

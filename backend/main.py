@@ -16,6 +16,9 @@ from app.database import create_database_tables
 from app.routers.audiobooks import router as audiobooks_router
 from app.routers.books import router as books_router
 from app.routers.tts import router as tts_router
+from app.routers.voice_cloning import (
+    router as voice_cloning_router,
+)
 
 
 @asynccontextmanager
@@ -52,6 +55,7 @@ app.add_middleware(
 app.include_router(books_router)
 app.include_router(tts_router)
 app.include_router(audiobooks_router)
+app.include_router(voice_cloning_router)
 
 
 @app.get("/")

@@ -22,6 +22,17 @@ from app.kokoro_client import (
     list_available_kokoro_voices,
     synthesize_kokoro_wav,
 )
+from app.voice_cloning.client import (
+    VoiceCloneClientError,
+    convert_to_clone_voice,
+    is_clone_worker_online,
+)
+from app.voice_cloning.service import (
+    clone_id_from_voice_id,
+    is_clone_voice_id,
+    list_voice_clones,
+    read_voice_clone,
+)
 
 BACKEND_DIRECTORY = Path(__file__).resolve().parent.parent
 VOICE_DIRECTORY = BACKEND_DIRECTORY / "data" / "voices"
@@ -50,11 +61,72 @@ def get_default_voice_name() -> str:
 
     return DEFAULT_VOICE_NAME
 
+def get_clone_unavailable_reason(
+    voice_id: str,
+) -> str | None:
+    """Return why a cloned narrator cannot be used, or None if it can."""
+    try:
+        clone = read_voice_clone(
+            clone_id_from_voice_id(voice_id)
+        )
+    except (FileNotFoundError, ValueError):
+        return "The selected cloned voice no longer exists."
+
+    if not clone.ready:
+        return (
+            "The selected cloned voice has not been "
+            "prepared yet."
+        )
+
+    if not is_clone_worker_online():
+        return (
+            "The selected cloned voice is unavailable. "
+            "Make sure the local voice cloning worker "
+            "is running."
+        )
+
+    if not is_kokoro_voice_available(
+        clone.base_voice
+    ):
+        return (
+            "Cloned voices need the local Kokoro worker "
+            "to be running."
+        )
+
+    return None
+
+
+def list_cloned_voices() -> list[dict[str, object]]:
+    """Return the user's prepared voice clones when they can be used."""
+    clones = [
+        clone
+        for clone in list_voice_clones()
+        if clone.ready
+    ]
+
+    if not clones or not is_clone_worker_online():
+        return []
+
+    return [
+        {
+            "id": clone.voice_id,
+            "name": clone.name,
+            "description": "Your voice · cloned",
+            "engine": "OpenVoice",
+            "group": "featured",
+            "featured": True,
+        }
+        for clone in clones
+        if is_kokoro_voice_available(clone.base_voice)
+    ]
+
+
 def list_installed_voices() -> list[dict[str, object]]:
     """Return all locally available OpenBook narrator voices."""
-    voices = (
-        list_available_kokoro_voices()
-    )
+    voices = [
+        *list_cloned_voices(),
+        *list_available_kokoro_voices(),
+    ]
 
     if not VOICE_DIRECTORY.is_dir():
         return voices
@@ -96,6 +168,20 @@ def get_voice_display_name(
         voice_name
         or get_default_voice_name()
     )
+
+    if is_clone_voice_id(
+        resolved_voice_name
+    ):
+        try:
+            clone = read_voice_clone(
+                clone_id_from_voice_id(
+                    resolved_voice_name
+                )
+            )
+        except (FileNotFoundError, ValueError):
+            return "Cloned voice"
+
+        return f"{clone.name} (Cloned voice)"
 
     if is_kokoro_voice_id(
         resolved_voice_name
@@ -177,6 +263,29 @@ def get_tts_status(
         or get_default_voice_name()
     ).strip()
 
+    if is_clone_voice_id(
+        resolved_name
+    ):
+        available = (
+            get_clone_unavailable_reason(
+                resolved_name
+            )
+            is None
+        )
+
+        return {
+            "available": available,
+            "engine": "OpenVoice",
+            "voice": resolved_name,
+            "default_voice": get_default_voice_name(),
+            "model_installed": available,
+            "config_installed": available,
+            "worker_available": available,
+            "max_preview_characters": (
+                MAX_PREVIEW_CHARACTERS
+            ),
+        }
+
     if is_kokoro_voice_id(
         resolved_name
     ):
@@ -249,6 +358,20 @@ def resolve_voice_name(
         resolved_name = (
             get_default_voice_name()
         )
+
+    if is_clone_voice_id(
+        resolved_name
+    ):
+        reason = get_clone_unavailable_reason(
+            resolved_name
+        )
+
+        if reason is not None:
+            raise TtsUnavailableError(
+                reason
+            )
+
+        return resolved_name
 
     if is_kokoro_voice_id(
         resolved_name
@@ -572,6 +695,46 @@ def synthesize_wav(
     resolved_voice = resolve_voice_name(
         voice_name
     )
+
+    if is_clone_voice_id(
+        resolved_voice
+    ):
+        clone_id = clone_id_from_voice_id(
+            resolved_voice
+        )
+        clone = read_voice_clone(
+            clone_id
+        )
+
+        if cancel_callback is not None:
+            cancel_callback()
+
+        try:
+            narration = synthesize_kokoro_wav(
+                speech_text,
+                speed,
+                clone.base_voice,
+            )
+
+            if cancel_callback is not None:
+                cancel_callback()
+
+            audio_bytes = convert_to_clone_voice(
+                clone_id,
+                narration,
+            )
+        except (
+            KokoroClientError,
+            VoiceCloneClientError,
+        ) as error:
+            raise TtsUnavailableError(
+                str(error)
+            ) from error
+
+        if cancel_callback is not None:
+            cancel_callback()
+
+        return audio_bytes
 
     if is_kokoro_voice_id(
         resolved_voice
