@@ -1,6 +1,12 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
 interface VoiceClone {
   id: string;
@@ -30,6 +36,75 @@ const BASE_VOICES = [
   { id: "kokoro:bm_george", label: "George · British male" },
 ];
 
+const MIN_RECORD_SECONDS = 10;
+const RECOMMENDED_RECORD_SECONDS = 30;
+const MAX_RECORD_SECONDS = 120;
+
+const READING_PASSAGE =
+  "The morning light came slowly across the hills, and the village " +
+  "began to wake. Somewhere a door opened, a dog barked twice, and " +
+  "the baker carried the first warm loaves into the square. Nobody " +
+  "hurried. There was time to talk about the weather, the harvest, " +
+  "and the long road that wound away toward the sea. By noon the " +
+  "streets were full, and the old clock in the tower struck twelve.";
+
+function formatSeconds(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+/** Encode decoded audio as a mono 16-bit PCM WAV file. */
+function encodeWav(audio: AudioBuffer): Blob {
+  const length = audio.length;
+  const channelCount = audio.numberOfChannels;
+  const mono = new Float32Array(length);
+
+  for (let channel = 0; channel < channelCount; channel += 1) {
+    const data = audio.getChannelData(channel);
+
+    for (let index = 0; index < length; index += 1) {
+      mono[index] += data[index] / channelCount;
+    }
+  }
+
+  const buffer = new ArrayBuffer(44 + length * 2);
+  const view = new DataView(buffer);
+
+  const writeText = (offset: number, text: string) => {
+    for (let index = 0; index < text.length; index += 1) {
+      view.setUint8(offset + index, text.charCodeAt(index));
+    }
+  };
+
+  writeText(0, "RIFF");
+  view.setUint32(4, 36 + length * 2, true);
+  writeText(8, "WAVE");
+  writeText(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, audio.sampleRate, true);
+  view.setUint32(28, audio.sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeText(36, "data");
+  view.setUint32(40, length * 2, true);
+
+  for (let index = 0; index < length; index += 1) {
+    const clamped = Math.max(-1, Math.min(1, mono[index]));
+
+    view.setInt16(
+      44 + index * 2,
+      clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff,
+      true,
+    );
+  }
+
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
 async function readError(response: Response): Promise<string> {
   try {
     const data = (await response.json()) as { detail?: unknown };
@@ -58,6 +133,169 @@ export default function VoiceCloneManager({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const [mode, setMode] = useState<"upload" | "record">("record");
+  const [recording, setRecording] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const [recordedUrl, setRecordedUrl] = useState<string | null>(null);
+  const [uploadKey, setUploadKey] = useState(0);
+
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const timerRef = useRef<number | null>(null);
+
+  const releaseMicrophone = useCallback((): void => {
+    if (timerRef.current !== null) {
+      window.clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      const recorder = recorderRef.current;
+
+      if (recorder && recorder.state !== "inactive") {
+        recorder.onstop = null;
+        recorder.stop();
+      }
+
+      releaseMicrophone();
+    };
+  }, [releaseMicrophone]);
+
+  useEffect(() => {
+    return () => {
+      if (recordedUrl) {
+        URL.revokeObjectURL(recordedUrl);
+      }
+    };
+  }, [recordedUrl]);
+
+  function discardRecording(): void {
+    setRecordedUrl(null);
+    setSample(null);
+    setElapsed(0);
+    setUploadKey((current) => current + 1);
+  }
+
+  async function startRecording(): Promise<void> {
+    if (recording || busy) {
+      return;
+    }
+
+    setError(null);
+    setMessage(null);
+    discardRecording();
+
+    if (
+      typeof MediaRecorder === "undefined" ||
+      !navigator.mediaDevices?.getUserMedia
+    ) {
+      setError(
+        "This browser can't record audio. Use the upload option instead.",
+      );
+      return;
+    }
+
+    let stream: MediaStream;
+
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: false,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+    } catch {
+      setError(
+        "Microphone access was blocked. Allow it in your browser's " +
+          "address bar, or use the upload option.",
+      );
+      return;
+    }
+
+    streamRef.current = stream;
+    chunksRef.current = [];
+
+    const recorder = new MediaRecorder(stream);
+
+    recorder.ondataavailable = (event: BlobEvent) => {
+      if (event.data.size > 0) {
+        chunksRef.current.push(event.data);
+      }
+    };
+
+    recorder.onstop = () => {
+      const type = recorder.mimeType || "audio/webm";
+      const raw = new Blob(chunksRef.current, { type });
+
+      releaseMicrophone();
+      setRecording(false);
+      void finishRecording(raw);
+    };
+
+    recorderRef.current = recorder;
+    recorder.start();
+
+    setRecording(true);
+    setElapsed(0);
+
+    const startedAt = Date.now();
+
+    timerRef.current = window.setInterval(() => {
+      const seconds = (Date.now() - startedAt) / 1000;
+
+      setElapsed(seconds);
+
+      if (seconds >= MAX_RECORD_SECONDS) {
+        stopRecording();
+      }
+    }, 250);
+  }
+
+  function stopRecording(): void {
+    const recorder = recorderRef.current;
+
+    if (recorder && recorder.state !== "inactive") {
+      recorder.stop();
+    }
+  }
+
+  async function finishRecording(raw: Blob): Promise<void> {
+    try {
+      // Convert to plain WAV so the length is always readable
+      // and the format doesn't depend on the browser.
+      const context = new AudioContext();
+
+      try {
+        const decoded = await context.decodeAudioData(
+          await raw.arrayBuffer(),
+        );
+
+        const wav = encodeWav(decoded);
+
+        setSample(
+          new File([wav], "recording.wav", { type: "audio/wav" }),
+        );
+        setRecordedUrl(URL.createObjectURL(wav));
+        setElapsed(decoded.duration);
+      } finally {
+        void context.close();
+      }
+    } catch {
+      setError(
+        "The recording couldn't be processed. Try again, or use " +
+          "the upload option.",
+      );
+    }
+  }
 
   const loadClones = useCallback(async (): Promise<void> => {
     try {
@@ -121,7 +359,7 @@ export default function VoiceCloneManager({
       );
 
       setName("");
-      setSample(null);
+      discardRecording();
       setConsent(false);
 
       await loadClones();
@@ -269,12 +507,6 @@ export default function VoiceCloneManager({
           )}
 
           <form onSubmit={handleCreate} className="grid gap-4">
-            <p className="text-xs leading-5 text-slate-400">
-              Record 20&ndash;60 seconds of yourself reading aloud in a quiet
-              room, then upload it here (WAV, MP3, M4A, FLAC or OGG, up to
-              25&nbsp;MB). Longer, clearer recordings sound better.
-            </p>
-
             <label className="grid gap-1 text-xs font-semibold text-slate-300">
               Name
               <input
@@ -288,18 +520,122 @@ export default function VoiceCloneManager({
               />
             </label>
 
-            <label className="grid gap-1 text-xs font-semibold text-slate-300">
-              Voice recording
-              <input
-                type="file"
-                required
-                accept=".wav,.mp3,.m4a,.flac,.ogg,audio/*"
-                onChange={(event) =>
-                  setSample(event.target.files?.[0] ?? null)
-                }
-                className="text-xs font-normal text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-800 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-slate-200"
-              />
-            </label>
+            <div className="grid gap-3">
+              <div
+                role="tablist"
+                className="inline-flex w-fit rounded-lg border border-slate-700 p-0.5 text-xs font-semibold"
+              >
+                {(["record", "upload"] as const).map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    role="tab"
+                    aria-selected={mode === option}
+                    disabled={recording}
+                    className={`rounded-md px-3 py-1.5 transition disabled:opacity-50 ${
+                      mode === option
+                        ? "bg-cyan-400/20 text-cyan-200"
+                        : "text-slate-400 hover:text-slate-200"
+                    }`}
+                    onClick={() => {
+                      setMode(option);
+                      discardRecording();
+                    }}
+                  >
+                    {option === "record" ? "Record now" : "Upload a file"}
+                  </button>
+                ))}
+              </div>
+
+              {mode === "record" ? (
+                <div className="grid gap-3">
+                  <p className="text-xs leading-5 text-slate-400">
+                    Find a quiet room, then read the passage below out loud
+                    in your normal storytelling voice. Aim for{" "}
+                    {RECOMMENDED_RECORD_SECONDS} seconds or more; at least{" "}
+                    {MIN_RECORD_SECONDS}. You can keep going past the end of
+                    the passage.
+                  </p>
+
+                  <blockquote className="rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-sm leading-6 text-slate-200">
+                    {READING_PASSAGE}
+                  </blockquote>
+
+                  <div className="flex flex-wrap items-center gap-3">
+                    {recording ? (
+                      <button
+                        type="button"
+                        className="rounded-xl border border-red-400/60 bg-red-500/10 px-4 py-2 text-sm font-bold text-red-200 hover:bg-red-500/20"
+                        onClick={stopRecording}
+                      >
+                        ■ Stop
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        className="rounded-xl border border-cyan-500/40 bg-cyan-500/10 px-4 py-2 text-sm font-bold text-cyan-200 hover:bg-cyan-400/20 disabled:opacity-50"
+                        onClick={() => void startRecording()}
+                      >
+                        {recordedUrl ? "● Record again" : "● Start recording"}
+                      </button>
+                    )}
+
+                    <span
+                      className={`font-mono text-sm tabular-nums ${
+                        recording ? "text-red-300" : "text-slate-400"
+                      }`}
+                      aria-live="off"
+                    >
+                      {formatSeconds(elapsed)} /{" "}
+                      {formatSeconds(MAX_RECORD_SECONDS)}
+                    </span>
+
+                    {recording && (
+                      <span className="flex items-center gap-1.5 text-xs font-semibold text-red-300">
+                        <span className="h-2 w-2 animate-pulse rounded-full bg-red-400" />
+                        Recording
+                      </span>
+                    )}
+                  </div>
+
+                  {recordedUrl && !recording && (
+                    <div className="grid gap-2">
+                      <audio controls src={recordedUrl} className="w-full" />
+
+                      {elapsed < MIN_RECORD_SECONDS ? (
+                        <p className="text-xs text-amber-300">
+                          That take is only {Math.floor(elapsed)} seconds.
+                          Please record at least {MIN_RECORD_SECONDS}.
+                        </p>
+                      ) : (
+                        <p className="text-xs text-slate-500">
+                          Listen back. If it sounds clear, create your voice
+                          below; otherwise record again.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <label className="grid gap-1 text-xs font-semibold text-slate-300">
+                  <span className="font-normal leading-5 text-slate-400">
+                    Upload 20&ndash;60 seconds of yourself reading aloud in a
+                    quiet room (WAV, MP3, M4A, FLAC or OGG, up to 25&nbsp;MB).
+                  </span>
+                  <input
+                    key={uploadKey}
+                    type="file"
+                    required
+                    accept=".wav,.mp3,.m4a,.flac,.ogg,audio/*"
+                    onChange={(event) =>
+                      setSample(event.target.files?.[0] ?? null)
+                    }
+                    className="text-xs font-normal text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-800 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-slate-200"
+                  />
+                </label>
+              )}
+            </div>
 
             <label className="grid gap-1 text-xs font-semibold text-slate-300">
               Starting narrator
@@ -336,7 +672,13 @@ export default function VoiceCloneManager({
             <button
               type="submit"
               disabled={
-                busy || !engineOnline || !consent || !sample || !name.trim()
+                busy ||
+                recording ||
+                !engineOnline ||
+                !consent ||
+                !sample ||
+                !name.trim() ||
+                (mode === "record" && elapsed < MIN_RECORD_SECONDS)
               }
               className="rounded-xl border border-cyan-500/40 bg-cyan-500/10 px-4 py-2.5 text-sm font-bold text-cyan-200 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-50"
             >
