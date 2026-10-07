@@ -104,6 +104,9 @@ interface GenerationEstimate {
   speed: number;
   total_words: number;
   estimated_duration_seconds: number;
+  estimated_generation_seconds: number;
+  generation_estimate_basis: "history" | "default";
+  generation_estimate_history_jobs: number;
   estimated_output_bytes: number;
   estimated_mp3_bytes: number;
   estimated_m4b_bytes: number;
@@ -174,6 +177,12 @@ interface AudiobookJob {
   speed: number;
   voice: string;
   dialogue_voice: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  elapsed_seconds: number | null;
+  eta_seconds: number | null;
+  eta_basis: "measured" | "history" | "default" | null;
+  queue_wait_seconds: number | null;
   total_sections: number;
   completed_sections: number;
   progress_percent: number;
@@ -2167,7 +2176,15 @@ export default function AudiobooksPage() {
             await requestJson<GenerationEstimate>(
               `${API_URL}/books/${bookId}/audiobook-estimate?speed=${encodeURIComponent(
                 String(speed),
-              )}`,
+              )}${
+                voice
+                  ? `&voice=${encodeURIComponent(voice)}`
+                  : ""
+              }${
+                dialogueVoice && dialogueVoice !== voice
+                  ? `&dialogue_voice=${encodeURIComponent(dialogueVoice)}`
+                  : ""
+              }`,
             );
 
           if (!cancelled) {
@@ -2194,6 +2211,8 @@ export default function AudiobooksPage() {
   }, [
     bookId,
     speed,
+    voice,
+    dialogueVoice,
     storageStatus?.free_bytes,
   ]);
 
@@ -4074,6 +4093,27 @@ export default function AudiobooksPage() {
                         </div>
 
                         <div className="flex justify-between gap-4">
+                          <dt>Time to generate</dt>
+                          <dd className="font-semibold text-white">
+                            {formatApproxDuration(
+                              generationEstimate.estimated_generation_seconds,
+                            )}
+                          </dd>
+                        </div>
+
+                        <p className="-mt-1 text-right text-[11px] leading-4 text-slate-500">
+                          {generationEstimate.generation_estimate_basis ===
+                          "history"
+                            ? `Based on your last ${generationEstimate.generation_estimate_history_jobs} ${
+                                generationEstimate.generation_estimate_history_jobs ===
+                                1
+                                  ? "audiobook"
+                                  : "audiobooks"
+                              } with these voices.`
+                            : "Typical speed for this kind of computer. It gets more accurate after you finish an audiobook."}
+                        </p>
+
+                        <div className="flex justify-between gap-4">
                           <dt>Estimated WAV</dt>
                           <dd className="font-semibold text-white">
                             {formatFileSize(
@@ -5559,6 +5599,38 @@ export default function AudiobooksPage() {
 
                   <p className="mt-2 text-sm text-slate-400">
                     {job.progress_percent}% complete
+                    {job.status === "running" &&
+                      job.eta_seconds !== null && (
+                        <>
+                          {" · "}
+                          <span className="font-medium text-cyan-200">
+                            {formatApproxDuration(job.eta_seconds)} left
+                          </span>
+                          {job.eta_basis !== "measured" && (
+                            <span className="text-slate-500">
+                              {" "}
+                              (estimate)
+                            </span>
+                          )}
+                        </>
+                      )}
+                    {job.status === "queued" &&
+                      job.eta_seconds !== null && (
+                        <>
+                          {" · "}
+                          {job.queue_wait_seconds
+                            ? `starts in ${formatApproxDuration(job.queue_wait_seconds)}, `
+                            : "starts next, "}
+                          then takes {formatApproxDuration(job.eta_seconds)}
+                        </>
+                      )}
+                    {job.status === "completed" &&
+                      job.elapsed_seconds !== null && (
+                        <>
+                          {" · generated in "}
+                          {formatApproxDuration(job.elapsed_seconds)}
+                        </>
+                      )}
                   </p>
 
                   {(job.status === "queued" ||
@@ -13847,6 +13919,33 @@ function formatDuration(
   }
 
   return `${seconds} sec`;
+}
+
+
+/** Rounded, friendly duration for estimates: "about 2 hr 15 min". */
+function formatApproxDuration(
+  totalSeconds: number,
+): string {
+  const seconds = Math.max(0, Math.round(totalSeconds));
+
+  if (seconds < 45) {
+    return "under a minute";
+  }
+
+  const totalMinutes = Math.round(seconds / 60);
+
+  if (totalMinutes < 90) {
+    return `about ${totalMinutes} min`;
+  }
+
+  // Past 90 minutes, minutes are false precision: round to 5.
+  const roundedMinutes = Math.round(totalMinutes / 5) * 5;
+  const hours = Math.floor(roundedMinutes / 60);
+  const minutes = roundedMinutes % 60;
+
+  return minutes === 0
+    ? `about ${hours} hr`
+    : `about ${hours} hr ${minutes} min`;
 }
 
 

@@ -66,6 +66,8 @@ def run_audiobook_job(job_id: int) -> None:
             job.status = "running"
             job.completed_sections = 0
             job.error_message = None
+            job.started_at = utc_timestamp()
+            job.finished_at = None
             job.updated_at = utc_timestamp()
 
             session.add(job)
@@ -153,6 +155,7 @@ def run_audiobook_job(job_id: int) -> None:
             job.output_size_bytes = (
                 output_path.stat().st_size
             )
+            job.finished_at = utc_timestamp()
             job.updated_at = utc_timestamp()
 
             session.add(job)

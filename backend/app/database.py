@@ -23,6 +23,7 @@ def create_database_tables() -> None:
     ensure_audiobook_job_voice_column()
     ensure_audiobook_job_output_format_column()
     ensure_audiobook_job_dialogue_voice_column()
+    ensure_audiobook_job_timing_columns()
     ensure_book_metadata_override_columns()
 
 
@@ -78,6 +79,26 @@ def ensure_audiobook_job_output_format_column() -> None:
                 "ALTER TABLE audiobookjob "
                 "ADD COLUMN output_format TEXT"
             )
+
+def ensure_audiobook_job_timing_columns() -> None:
+    """Add run start/finish times used for time-remaining estimates."""
+    with engine.begin() as connection:
+        columns = connection.exec_driver_sql(
+            "PRAGMA table_info(audiobookjob)"
+        ).fetchall()
+
+        column_names = {
+            str(column[1])
+            for column in columns
+        }
+
+        for column in ("started_at", "finished_at"):
+            if column not in column_names:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE audiobookjob "
+                    f"ADD COLUMN {column} TEXT"
+                )
+
 
 def ensure_audiobook_job_dialogue_voice_column() -> None:
     """Add second-narrator (dialogue) storage to existing databases."""

@@ -463,6 +463,8 @@ def run_direct_m4b_job(
             job.completed_sections = 0
             job.output_size_bytes = None
             job.error_message = None
+            job.started_at = utc_timestamp()
+            job.finished_at = None
             job.updated_at = utc_timestamp()
 
             session.add(job)
@@ -597,6 +599,7 @@ def run_direct_m4b_job(
                 job.total_sections
             )
             job.output_size_bytes = None
+            job.finished_at = utc_timestamp()
             job.updated_at = utc_timestamp()
 
             session.add(job)

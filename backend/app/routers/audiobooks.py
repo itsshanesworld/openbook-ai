@@ -1,5 +1,10 @@
 """Audiobook generation API routes."""
 
+from app.eta_service import (
+    estimate_generation_seconds,
+    estimate_job_remaining,
+    estimate_queue_wait_seconds,
+)
 from app.audiobook_queue import (
     get_queue_position,
     start_audiobook_queue,
@@ -110,8 +115,16 @@ def get_audiobook_storage_estimate(
             le=1.5,
         ),
     ] = 1.0,
-) -> dict[str, int | float | bool]:
-    """Estimate audiobook duration and storage before generation."""
+    voice: Annotated[
+        str | None,
+        Query(max_length=120),
+    ] = None,
+    dialogue_voice: Annotated[
+        str | None,
+        Query(max_length=120),
+    ] = None,
+) -> dict[str, int | float | bool | str | None]:
+    """Estimate audiobook duration, generation time and storage."""
     book = session.get(
         Book,
         book_id,
@@ -174,12 +187,27 @@ def get_audiobook_storage_estimate(
         )
     )
 
+    generation = estimate_generation_seconds(
+        session,
+        total_words,
+        speed,
+        voice or get_default_voice_name(),
+        dialogue_voice,
+    )
+
     return {
         "book_id": book_id,
         "speed": speed,
         "total_words": total_words,
         "estimated_duration_seconds": round(
             estimated_duration_seconds
+        ),
+        "estimated_generation_seconds": int(
+            generation["seconds"]  # type: ignore[call-overload]
+        ),
+        "generation_estimate_basis": str(generation["basis"]),
+        "generation_estimate_history_jobs": int(
+            generation["history_jobs"]  # type: ignore[call-overload]
         ),
         "estimated_mp3_bytes": estimated_compressed_bytes,
         "estimated_m4b_bytes": estimated_compressed_bytes,
@@ -1601,6 +1629,11 @@ def serialize_job(
         )
     )
 
+    eta = estimate_job_remaining(
+        session,
+        job,
+    )
+
     return {
         "id": job.id,
         "book_id": job.book_id,
@@ -1619,6 +1652,15 @@ def serialize_job(
             or get_default_voice_name()
         ),
         "dialogue_voice": job.dialogue_voice,
+        "started_at": job.started_at,
+        "finished_at": job.finished_at,
+        "elapsed_seconds": eta["elapsed_seconds"],
+        "eta_seconds": eta["eta_seconds"],
+        "eta_basis": eta["basis"],
+        "queue_wait_seconds": estimate_queue_wait_seconds(
+            session,
+            job,
+        ),
         "total_sections": job.total_sections,
         "completed_sections": job.completed_sections,
         "progress_percent": progress_percent,

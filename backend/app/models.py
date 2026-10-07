@@ -104,6 +104,8 @@ class AudiobookJob(SQLModel, table=True):
     )
     created_at: str = Field(default_factory=utc_timestamp)
     updated_at: str = Field(default_factory=utc_timestamp)
+    started_at: str | None = None
+    finished_at: str | None = None
 
 
 class AudiobookSectionTiming(SQLModel, table=True):

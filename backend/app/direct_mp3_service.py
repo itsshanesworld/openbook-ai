@@ -451,6 +451,8 @@ def run_direct_mp3_job(
             job.completed_sections = 0
             job.output_size_bytes = None
             job.error_message = None
+            job.started_at = utc_timestamp()
+            job.finished_at = None
             job.updated_at = utc_timestamp()
 
             session.add(
@@ -568,6 +570,7 @@ def run_direct_mp3_job(
             )
 
             job.output_size_bytes = None
+            job.finished_at = utc_timestamp()
             job.updated_at = utc_timestamp()
 
             session.add(
