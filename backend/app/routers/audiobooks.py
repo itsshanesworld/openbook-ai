@@ -427,6 +427,35 @@ def create_audiobook_job(
             detail="The selected local narrator voice is unavailable.",
         )
 
+    dialogue_voice_name: str | None = None
+
+    if request.dialogue_voice:
+        try:
+            resolved_dialogue_voice = resolve_voice_name(
+                request.dialogue_voice
+            )
+        except TtsUnavailableError as error:
+            raise HTTPException(
+                status_code=422,
+                detail=str(error),
+            ) from error
+
+        if resolved_dialogue_voice != voice_name:
+            if not bool(
+                get_tts_status(
+                    resolved_dialogue_voice
+                )["available"]
+            ):
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "The selected dialogue voice "
+                        "is unavailable."
+                    ),
+                )
+
+            dialogue_voice_name = resolved_dialogue_voice
+
     total_words = sum(
         section.word_count
         for section in sections
@@ -500,6 +529,7 @@ def create_audiobook_job(
         status="queued",
         speed=request.speed,
         voice=voice_name,
+        dialogue_voice=dialogue_voice_name,
         total_sections=len(sections),
         completed_sections=0,
         output_format=request.output_format,
@@ -570,6 +600,7 @@ def retry_audiobook_job(
         output_format=original_job.output_format,
         speed=original_job.speed,
         voice=original_job.voice,
+        dialogue_voice=original_job.dialogue_voice,
     )
 
     return create_audiobook_job(
@@ -1587,6 +1618,7 @@ def serialize_job(
             job.voice
             or get_default_voice_name()
         ),
+        "dialogue_voice": job.dialogue_voice,
         "total_sections": job.total_sections,
         "completed_sections": job.completed_sections,
         "progress_percent": progress_percent,

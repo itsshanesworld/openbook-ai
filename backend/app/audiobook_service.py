@@ -136,6 +136,7 @@ def run_audiobook_job(job_id: int) -> None:
                     )
                 ),
                 voice_name=job.voice,
+                dialogue_voice_name=job.dialogue_voice,
                 cancel_callback=(
                     lambda: raise_if_audiobook_cancelled(
                         job_id
@@ -205,6 +206,7 @@ def generate_combined_wav(
     timing_callback: TimingCallback,
     voice_name: str | None = None,
     *,
+    dialogue_voice_name: str | None = None,
     cancel_callback: CancellationCallback | None = None,
     synthesizer: SynthesisFunction = synthesize_wav,
 ) -> None:
@@ -233,6 +235,7 @@ def generate_combined_wav(
                 section.text,
                 speed,
                 voice_name=voice_name,
+                dialogue_voice_name=dialogue_voice_name,
                 cancel_callback=cancel_callback,
             )
 

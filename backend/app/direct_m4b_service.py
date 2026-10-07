@@ -149,6 +149,7 @@ def create_direct_m4b(
                 section.text,
                 job.speed,
                 voice_name=job.voice,
+                dialogue_voice_name=job.dialogue_voice,
                 cancel_callback=cancel_callback,
             )
 

@@ -22,6 +22,7 @@ def create_database_tables() -> None:
     SQLModel.metadata.create_all(engine)
     ensure_audiobook_job_voice_column()
     ensure_audiobook_job_output_format_column()
+    ensure_audiobook_job_dialogue_voice_column()
     ensure_book_metadata_override_columns()
 
 
@@ -77,6 +78,25 @@ def ensure_audiobook_job_output_format_column() -> None:
                 "ALTER TABLE audiobookjob "
                 "ADD COLUMN output_format TEXT"
             )
+
+def ensure_audiobook_job_dialogue_voice_column() -> None:
+    """Add second-narrator (dialogue) storage to existing databases."""
+    with engine.begin() as connection:
+        columns = connection.exec_driver_sql(
+            "PRAGMA table_info(audiobookjob)"
+        ).fetchall()
+
+        column_names = {
+            str(column[1])
+            for column in columns
+        }
+
+        if "dialogue_voice" not in column_names:
+            connection.exec_driver_sql(
+                "ALTER TABLE audiobookjob "
+                "ADD COLUMN dialogue_voice TEXT"
+            )
+
 
 def ensure_audiobook_job_voice_column() -> None:
     """Add narrator voice storage to existing databases."""

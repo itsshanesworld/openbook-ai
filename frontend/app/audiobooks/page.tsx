@@ -173,6 +173,7 @@ interface AudiobookJob {
   output_format: "wav" | "mp3" | "m4b" | null;
   speed: number;
   voice: string;
+  dialogue_voice: string | null;
   total_sections: number;
   completed_sections: number;
   progress_percent: number;
@@ -253,6 +254,8 @@ const API_URL =
 
 const NARRATOR_STORAGE_KEY =
   "openbook-audiobooks-narrator";
+const DIALOGUE_VOICE_STORAGE_KEY =
+  "openbook-audiobooks-dialogue-voice";
 const SPEED_STORAGE_KEY =
   "openbook-audiobooks-speed";
 const MIN_NARRATION_SPEED = 0.75;
@@ -262,6 +265,20 @@ function readStoredNarrator(): string | null {
   try {
     const value = window.localStorage.getItem(
       NARRATOR_STORAGE_KEY,
+    );
+
+    const cleaned = value?.trim() ?? "";
+
+    return cleaned || null;
+  } catch {
+    return null;
+  }
+}
+
+function readStoredDialogueVoice(): string | null {
+  try {
+    const value = window.localStorage.getItem(
+      DIALOGUE_VOICE_STORAGE_KEY,
     );
 
     const cleaned = value?.trim() ?? "";
@@ -513,6 +530,7 @@ export default function AudiobooksPage() {
   const [speed, setSpeed] = useState(1);
   const [voices, setVoices] = useState<VoiceOption[]>([]);
   const [voice, setVoice] = useState("");
+  const [dialogueVoice, setDialogueVoice] = useState("");
   const [storageStatus, setStorageStatus] =
     useState<StorageStatus | null>(null);
   const [storageSummary, setStorageSummary] =
@@ -2243,6 +2261,19 @@ export default function AudiobooksPage() {
           );
         }
 
+        const storedDialogueVoice =
+          readStoredDialogueVoice();
+
+        if (
+          storedDialogueVoice !== null &&
+          voiceData.voices.some(
+            (installedVoice) =>
+              installedVoice.id === storedDialogueVoice,
+          )
+        ) {
+          setDialogueVoice(storedDialogueVoice);
+        }
+
         const storedSpeed =
           readStoredNarrationSpeed();
 
@@ -2269,6 +2300,16 @@ export default function AudiobooksPage() {
       );
 
       setVoices(voiceData.voices);
+
+      if (
+        dialogueVoice &&
+        !voiceData.voices.some(
+          (installedVoice) => installedVoice.id === dialogueVoice,
+        )
+      ) {
+        setDialogueVoice("");
+        saveAudiobookPreference(DIALOGUE_VOICE_STORAGE_KEY, "");
+      }
 
       // A deleted cloned voice must not stay selected.
       if (
@@ -2455,6 +2496,10 @@ export default function AudiobooksPage() {
           body: JSON.stringify({
             speed,
             voice,
+            dialogue_voice:
+              dialogueVoice && dialogueVoice !== voice
+                ? dialogueVoice
+                : null,
             output_format: outputFormat,
           }),
         },
@@ -3873,6 +3918,71 @@ export default function AudiobooksPage() {
                         preference.
                       </p>
                     </>
+                  )}
+
+                  {voices.length > 1 && (
+                    <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-950/50 p-4 sm:p-5">
+                      <label
+                        className="block text-base font-bold text-white"
+                        htmlFor="dialogue-voice"
+                      >
+                        Dialogue voice
+                        <span className="ml-2 text-xs font-medium text-slate-500">
+                          optional
+                        </span>
+                      </label>
+
+                      <p className="mt-1 text-xs leading-5 text-slate-400">
+                        Use a second voice for anything inside double
+                        quotation marks. The narrator above reads
+                        everything else.
+                      </p>
+
+                      <select
+                        id="dialogue-voice"
+                        className="mt-3 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm text-white"
+                        value={dialogueVoice}
+                        onChange={(event) => {
+                          setDialogueVoice(event.target.value);
+
+                          saveAudiobookPreference(
+                            DIALOGUE_VOICE_STORAGE_KEY,
+                            event.target.value,
+                          );
+
+                          clearMessages();
+                        }}
+                      >
+                        <option value="">
+                          Same as narrator (one voice)
+                        </option>
+
+                        {voices
+                          .filter(
+                            (installedVoice) =>
+                              installedVoice.id !== voice,
+                          )
+                          .map((installedVoice) => (
+                            <option
+                              key={installedVoice.id}
+                              value={installedVoice.id}
+                            >
+                              {installedVoice.name} ·{" "}
+                              {installedVoice.engine}
+                            </option>
+                          ))}
+                      </select>
+
+                      {dialogueVoice &&
+                        dialogueVoice !== voice && (
+                          <p className="mt-3 text-xs leading-5 text-amber-200/80">
+                            Two voices take longer to generate, because
+                            each section is read in several pieces.
+                            Dialogue is detected from double quotes
+                            only.
+                          </p>
+                        )}
+                    </div>
                   )}
 
                   <VoiceCloneManager

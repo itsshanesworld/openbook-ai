@@ -12,6 +12,7 @@ from pathlib import Path
 
 from piper import PiperVoice, SynthesisConfig
 
+from app.dialogue_service import synthesize_dialogue
 from app.kokoro_client import (
     KOKORO_DEFAULT_VOICE_ID,
     KokoroClientError,
@@ -876,9 +877,33 @@ def synthesize_with_optional_cancellation(
     speed: float,
     *,
     voice_name: str | None = None,
+    dialogue_voice_name: str | None = None,
     cancel_callback: Callable[[], None] | None = None,
 ) -> bytes:
-    """Call a synthesizer while preserving legacy test doubles."""
+    """Call a synthesizer while preserving legacy test doubles.
+
+    With ``dialogue_voice_name``, text inside double quotation marks is
+    read by that voice and everything else by ``voice_name``.
+    """
+    if (
+        dialogue_voice_name
+        and dialogue_voice_name != voice_name
+    ):
+        return synthesize_dialogue(
+            text,
+            lambda segment_text, segment_voice: (
+                synthesize_with_optional_cancellation(
+                    synthesizer,
+                    segment_text,
+                    speed,
+                    voice_name=segment_voice,
+                    cancel_callback=cancel_callback,
+                )
+            ),
+            voice_name,
+            dialogue_voice_name,
+        )
+
     if cancel_callback is None:
         return synthesizer(
             text,

@@ -200,6 +200,7 @@ def create_direct_mp3(
                 section.text,
                 job.speed,
                 voice_name=job.voice,
+                dialogue_voice_name=job.dialogue_voice,
                 cancel_callback=cancel_callback,
             )
 

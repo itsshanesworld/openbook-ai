@@ -121,7 +121,13 @@ class AudiobookCreateRequest(BaseModel):
         max_length=120,
     )
 
-    @field_validator("voice")
+    dialogue_voice: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=120,
+    )
+
+    @field_validator("voice", "dialogue_voice")
     @classmethod
     def normalize_voice(
         cls,
