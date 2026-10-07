@@ -47,6 +47,7 @@ from app.storage_service import (
     ensure_storage_capacity,
     estimate_compressed_audio_size_bytes,
 )
+from app.dialogue_service import plan_quote_contexts
 from app.tts_service import (
     get_voice_display_name,
     synthesize_wav,
@@ -137,6 +138,14 @@ def create_direct_m4b(
     sample_rate: int | None = None
 
     try:
+        quote_contexts = (
+            plan_quote_contexts(
+                [section.text for section in sections]
+            )
+            if job.dialogue_voice
+            else None
+        )
+
         for index, section in enumerate(
             sections,
             start=1,
@@ -150,6 +159,11 @@ def create_direct_m4b(
                 job.speed,
                 voice_name=job.voice,
                 dialogue_voice_name=job.dialogue_voice,
+                quote_context=(
+                    quote_contexts[index - 1]
+                    if quote_contexts
+                    else None
+                ),
                 cancel_callback=cancel_callback,
             )
 

@@ -6,11 +6,15 @@ quotation marks is read by a second narrator.
 Only double quotes are treated as dialogue markers (straight "..." and
 curly “...”). Single quotes are ignored because apostrophes make them
 ambiguous.
+
+A quotation can span several narration sections. ``plan_quote_contexts``
+looks across the whole book once, before generation, and records which
+sections begin inside an open quote and which leave one open.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from io import BytesIO
 import re
@@ -27,6 +31,11 @@ STRAIGHT_QUOTE = '"'
 # clipped.
 VOICE_CHANGE_GAP_MS = 140
 
+# An open quote is only carried into following sections if it is closed
+# within this many sections; otherwise it was almost certainly a stray
+# mark and carrying it would flip the voices for the rest of the book.
+MAX_CARRY_SECTIONS = 3
+
 _SPOKEN_CONTENT = re.compile(r"\w")
 
 
@@ -38,7 +47,21 @@ class DialogueSegment:
     is_dialogue: bool
 
 
-def split_dialogue(text: str) -> list[DialogueSegment]:
+@dataclass(frozen=True, slots=True)
+class QuoteContext:
+    """Quote state at the edges of one narration section."""
+
+    starts_in_dialogue: bool = False
+    continues_after: bool = False
+
+
+DEFAULT_QUOTE_CONTEXT = QuoteContext()
+
+
+def split_dialogue(
+    text: str,
+    context: QuoteContext = DEFAULT_QUOTE_CONTEXT,
+) -> list[DialogueSegment]:
     """Split text into narration and quoted-dialogue segments.
 
     Unbalanced quotes degrade gracefully:
@@ -48,22 +71,76 @@ def split_dialogue(text: str) -> list[DialogueSegment]:
     * an opening quote that is never closed makes the rest dialogue
       (the quote continues into the next section);
     * an odd number of straight quotes with no curly quotes is
-      ambiguous, so the whole text is read as narration.
+      ambiguous, so the whole text is read as narration - unless the
+      surrounding sections confirm a quote spans the boundary.
+
+    ``context`` comes from :func:`plan_quote_contexts`.
     """
+    segments, _ = _tokenize(
+        text,
+        context.starts_in_dialogue,
+        odd_straight_is_narration=(
+            not context.starts_in_dialogue
+            and not context.continues_after
+        ),
+    )
+
+    return _clean(segments)
+
+
+def plan_quote_contexts(
+    texts: Sequence[str],
+) -> list[QuoteContext]:
+    """Work out, for every section, whether a quote spans its edges."""
+    contexts: list[QuoteContext] = []
+    state = False
+
+    for index, text in enumerate(texts):
+        _, ends_open = _tokenize(
+            text,
+            state,
+            odd_straight_is_narration=False,
+        )
+
+        continues = ends_open and _closes_soon(
+            texts,
+            index + 1,
+        )
+
+        contexts.append(
+            QuoteContext(
+                starts_in_dialogue=state,
+                continues_after=continues,
+            )
+        )
+        state = continues
+
+    return contexts
+
+
+def _tokenize(
+    text: str,
+    start_in_quote: bool,
+    *,
+    odd_straight_is_narration: bool,
+) -> tuple[list[DialogueSegment], bool]:
+    """Split text on quotes; also report whether a quote is left open."""
     has_curly = (
         OPENING_QUOTE in text
         or CLOSING_QUOTE in text
     )
 
     if (
-        not has_curly
+        odd_straight_is_narration
+        and not start_in_quote
+        and not has_curly
         and text.count(STRAIGHT_QUOTE) % 2 == 1
     ):
-        return _clean([DialogueSegment(text, False)])
+        return [DialogueSegment(text, False)], False
 
     segments: list[DialogueSegment] = []
     buffer: list[str] = []
-    in_quote = False
+    in_quote = start_in_quote
 
     def flush(is_dialogue: bool) -> None:
         if buffer:
@@ -91,7 +168,50 @@ def split_dialogue(text: str) -> list[DialogueSegment]:
 
     flush(in_quote)
 
-    return _clean(segments)
+    return segments, in_quote
+
+
+def _closes_soon(
+    texts: Sequence[str],
+    start: int,
+) -> bool:
+    """Whether an open quote is properly closed in the next sections."""
+    for offset in range(MAX_CARRY_SECTIONS):
+        index = start + offset
+
+        if index >= len(texts):
+            return False
+
+        candidate = texts[index]
+
+        if not any(
+            mark in candidate
+            for mark in (
+                OPENING_QUOTE,
+                CLOSING_QUOTE,
+                STRAIGHT_QUOTE,
+            )
+        ):
+            # Still inside the quote; keep looking.
+            continue
+
+        return _begins_by_closing(candidate)
+
+    return False
+
+
+def _begins_by_closing(text: str) -> bool:
+    """Whether a section's first quote mark closes an earlier quote."""
+    first_close = text.find(CLOSING_QUOTE)
+    first_open = text.find(OPENING_QUOTE)
+
+    if first_close != -1 or first_open != -1:
+        return first_close != -1 and (
+            first_open == -1 or first_close < first_open
+        )
+
+    # Straight quotes only: a closer plus balanced pairs is odd.
+    return text.count(STRAIGHT_QUOTE) % 2 == 1
 
 
 def _clean(
@@ -131,13 +251,14 @@ def synthesize_dialogue(
     synthesize_segment: Callable[[str, str | None], bytes],
     narrator_voice: str | None,
     dialogue_voice: str,
+    context: QuoteContext = DEFAULT_QUOTE_CONTEXT,
 ) -> bytes:
     """Read narration and dialogue with their own voices as one WAV.
 
     ``synthesize_segment(text, voice)`` must return WAV bytes. Text
     with no dialogue is passed through untouched, in a single call.
     """
-    segments = split_dialogue(text)
+    segments = split_dialogue(text, context)
 
     if not any(
         segment.is_dialogue for segment in segments

@@ -24,6 +24,7 @@ from app.models import (
     utc_timestamp,
 )
 from app.storage_service import ensure_storage_capacity
+from app.dialogue_service import plan_quote_contexts
 from app.tts_service import (
     synthesize_wav,
     synthesize_with_optional_cancellation,
@@ -226,6 +227,14 @@ def generate_combined_wav(
     sample_rate: int | None = None
 
     try:
+        quote_contexts = (
+            plan_quote_contexts(
+                [section.text for section in sections]
+            )
+            if dialogue_voice_name
+            else None
+        )
+
         for index, section in enumerate(
             sections,
             start=1,
@@ -239,6 +248,11 @@ def generate_combined_wav(
                 speed,
                 voice_name=voice_name,
                 dialogue_voice_name=dialogue_voice_name,
+                quote_context=(
+                    quote_contexts[index - 1]
+                    if quote_contexts
+                    else None
+                ),
                 cancel_callback=cancel_callback,
             )
 
