@@ -8,7 +8,8 @@
 set -e
 
 PROJECT_DIR="$HOME/openbook-ai"
-CLONE_DIR="$PROJECT_DIR/backend/data/voice_clone"
+# OPENBOOK_VOICE_CLONE_DIR is only meant for testing the installer.
+CLONE_DIR="${OPENBOOK_VOICE_CLONE_DIR:-$PROJECT_DIR/backend/data/voice_clone}"
 VENV_DIR="$CLONE_DIR/.venv"
 REPO_DIR="$CLONE_DIR/OpenVoice"
 CHECKPOINT_DIR="$CLONE_DIR/ov_ckpt"
