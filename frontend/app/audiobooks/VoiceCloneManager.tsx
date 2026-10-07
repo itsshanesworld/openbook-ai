@@ -105,6 +105,23 @@ function encodeWav(audio: AudioBuffer): Blob {
   return new Blob([buffer], { type: "audio/wav" });
 }
 
+/** Returns the clone list, null on a failed response, "offline" if unreachable. */
+async function fetchVoiceClones(
+  apiUrl: string,
+): Promise<VoiceCloneList | null | "offline"> {
+  try {
+    const response = await fetch(`${apiUrl}/voice-clones`);
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return (await response.json()) as VoiceCloneList;
+  } catch {
+    return "offline";
+  }
+}
+
 async function readError(response: Response): Promise<string> {
   try {
     const data = (await response.json()) as { detail?: unknown };
@@ -298,25 +315,36 @@ export default function VoiceCloneManager({
   }
 
   const loadClones = useCallback(async (): Promise<void> => {
-    try {
-      const response = await fetch(`${apiUrl}/voice-clones`);
+    const data = await fetchVoiceClones(apiUrl);
 
-      if (!response.ok) {
-        return;
-      }
-
-      const data = (await response.json()) as VoiceCloneList;
-
+    if (data === "offline") {
+      setEngineOnline(false);
+    } else if (data) {
       setClones(data.voice_clones);
       setEngineOnline(data.engine_online);
-    } catch {
-      setEngineOnline(false);
     }
   }, [apiUrl]);
 
   useEffect(() => {
-    void loadClones();
-  }, [loadClones]);
+    let ignore = false;
+
+    void fetchVoiceClones(apiUrl).then((data) => {
+      if (ignore) {
+        return;
+      }
+
+      if (data === "offline") {
+        setEngineOnline(false);
+      } else if (data) {
+        setClones(data.voice_clones);
+        setEngineOnline(data.engine_online);
+      }
+    });
+
+    return () => {
+      ignore = true;
+    };
+  }, [apiUrl]);
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
